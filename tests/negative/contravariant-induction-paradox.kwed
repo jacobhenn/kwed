@@ -1,0 +1,12 @@
+inductive False.
+
+(~ see HoTT 164 ~)
+inductive C 
+	| g (h : (- : C) -> False)
+.
+
+f : (c : C) -> False
+	| g h => h (g h)
+.
+
+contradiction : False := f (g f).

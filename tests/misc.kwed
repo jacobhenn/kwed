@@ -1,0 +1,49 @@
+inductive Nat
+	| zero
+	| suc (n : Nat)
+.
+
+n0 : Nat := zero.
+n1 : Nat := suc n0.
+n2 : Nat := suc n1.
+n3 : Nat := suc n2.
+n4 : Nat := suc n3.
+n5 : Nat := suc n4.
+n6 : Nat := suc n5.
+n7 : Nat := suc n6.
+n8 : Nat := suc n7.
+n9 : Nat := suc n8.
+n10 : Nat := suc n9.
+n11 : Nat := suc n10.
+n12 : Nat := suc n11.
+
+add (n : Nat) (m : Nat) : Nat
+	:= split n to - => Nat
+		| zero => m
+		| suc n' => suc rec{n'}
+	.
+.
+
+if-sucs-eq-then-eq
+	(n : Nat)
+	(m : Nat)
+	(p : (suc n) = (suc m) : Nat)
+: n = m : Nat
+	:= split n to - => - = m : Nat
+		| zero => split m to - => zero = m : Nat
+			| 
+
+add-1-is-suc (n : Nat) : (add n n1) = (suc n) : Nat
+	:= split n to - => (add - n1) = (suc -)
+		| zero => refl Nat n1
+		| suc n' => 
+			know: add n' n1 = suc n'
+			show: add (suc n') n1 = suc (suc n')
+			show: suc (add n' n1) = suc (suc n')
+	.
+.
+
+(~ add-comm (n : Nat) (m : Nat)
+	: (add n m) = (add m n) : Nat
+:= split n to - => (add - m) = (add m -) : Nat
+	| zero => ~)

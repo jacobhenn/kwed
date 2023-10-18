@@ -1,0 +1,74 @@
+use crate::ast::{
+	Definition,
+	Expr,
+	Branch,
+	Item,
+	InductiveDefinition,
+	ConstructorDefinition,
+};
+
+grammar;
+
+pub Module: Vec<Item> = {
+	<(<Item> ".")*>
+}
+
+Item: Item = {
+	<Definition> => Item::Definition(<>),
+	<InductiveDefinition> => Item::InductiveDefinition(<>),
+}
+
+InductiveDefinition: InductiveDefinition = {
+	"inductive" <name:Ident> <constructors:("|" <ConstructorDefinition>)*> => {
+		InductiveDefinition { <> }
+	},
+}
+
+ConstructorDefinition: ConstructorDefinition = {
+	<name:Ident> <args:("(" <Ident> ":" <Expr> ")")*> => {
+		ConstructorDefinition { <> }
+	},
+}
+
+Definition: Definition = {
+    <name:Ident> <args:("(" <Ident> ":" <Expr> ")")*> ":" <ty:Expr> ":=" <value:Expr> => {
+		Definition::new(<>)
+	},
+}
+
+// an atom is any expression whose left and right boundaries are completely unambiguous
+Atom: Expr = {
+	Ident => Expr::Ident(<>),
+	"Type" => Expr::Universe,
+	"(" <Expr> ")",
+	"rec" "{" <argument:Ident> "}" => Expr::recursive_call(<>),
+
+	"split" <argument:Expr> "to" <var:Ident> "=>" <family:Expr> <branches:Branch*> "." => {
+		Expr::split(<>)
+	},
+}
+
+Branch: Branch = {
+	"|" <constructor:Ident> <arguments:Ident*> "=>" <value:Expr> => Branch::new(<>),
+}
+
+pub Expr: Expr = {
+	Atom,
+
+	// function types
+
+	"(" <variable:Ident> ":" <domain:Expr> ")" "->" <codomain:Expr> => Expr::function_type(<>),
+	<domain:Atom> "->" <codomain:Expr> => Expr::function_type(String::new(), <>),
+	"fun" "(" <variable:Ident> ":" <domain:Expr> ")" "=>" <open_term:Expr> => {
+		Expr::function_abstraction(<>)
+	},
+	<function:Atom> <args:Atom+> => Expr::function_application(<>),
+
+	// path types
+
+	<src:Atom> "=" <dst:Expr> ":" <ty:Expr> => Expr::path_type(<>),
+}
+
+Ident: String = {
+	r"[a-zA-Z-_][a-zA-Z0-9-_'>]*" => <>.to_string(),
+}

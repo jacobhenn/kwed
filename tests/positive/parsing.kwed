@@ -1,0 +1,1 @@
+- : Type 0 -> Type 0 -> Type 0 := fun (A : Type 0) => fun (B : Type 0) => A.

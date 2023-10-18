@@ -1,0 +1,48 @@
+(~
+	this file will translate many inductive type definitions and simple theorems about them
+	from the HoTT book into kwed. they are meant to start simple and get more complex as you go on
+~)
+
+(~ ---------- elementary induction ---------- ~)
+
+inductive Bool
+	| Bool-false
+	| Bool-true
+.
+
+inductive Unit | unit.
+
+inductive Nat
+	| Nat-zero
+	| Nat-succ (n : Nat)
+.
+
+n0 : Nat := Nat-zero.
+n1 : Nat := Nat-succ n0.
+n2 : Nat := Nat-succ n1.
+n3 : Nat := Nat-succ n2.
+n4 : Nat := Nat-succ n3.
+n5 : Nat := Nat-succ n4.
+n6 : Nat := Nat-succ n5.
+
+(~ proof that induction works as expected on the natural numbers ~)
+Nat-induction 
+	(P : Nat -> Type)
+	(z : P Nat-zero)
+	(s : (r : Nat) -> (P r) -> P (Nat-succ r))
+	(n : Nat)
+: P n 
+	:= split n to - => P -
+		| Nat-zero => z
+		| Nat-succ n' => s n' rec{n'}
+	.
+.
+
+Nat-double (n : Nat) : Nat
+	:= split n to - => Nat
+		| Nat-zero => Nat-zero
+		| Nat-succ m => Nat-succ (Nat-succ rec{m})
+	.
+.
+
+double-3-is-6 : (Nat-double n3) = n6 : Nat := refl Nat n6.

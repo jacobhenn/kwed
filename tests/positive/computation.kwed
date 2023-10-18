@@ -1,0 +1,9 @@
+pi-computation : (A : Type 0)
+	-> (B : (- : A) -> Type 0)
+	-> (f : (x : A) -> B x)
+	-> (fun (y : A) => f y) = f : (x : A) -> B x
+:= fun (A : Type 0)
+	=> fun (B : (- : A) -> Type 0)
+	=> fun (f : (x : A) -> B x)
+=> (refl ((x : A) -> B x)) f
+.
