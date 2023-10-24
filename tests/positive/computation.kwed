@@ -1,9 +1,5 @@
-pi-computation : (A : Type 0)
-	-> (B : (- : A) -> Type 0)
-	-> (f : (x : A) -> B x)
-	-> (fun (y : A) => f y) = f : (x : A) -> B x
-:= fun (A : Type 0)
-	=> fun (B : (- : A) -> Type 0)
-	=> fun (f : (x : A) -> B x)
-=> (refl ((x : A) -> B x)) f
-.
+inductive Unit | unit : Unit.
+
+id (A : Type) (x : A) : A := x.
+
+id-unit-is-unit : (id Unit unit) = unit : Unit := refl Unit unit.

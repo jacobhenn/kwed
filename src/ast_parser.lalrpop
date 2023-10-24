@@ -1,10 +1,9 @@
-use crate::ast::{
-	Definition,
-	Expr,
-	Branch,
-	Item,
-	InductiveDefinition,
-	ConstructorDefinition,
+use crate::{
+	eval::{Expr, Branch, InductiveDefinition, ConstructorDefinition},
+	ast::{
+		Definition,
+		Item,
+	},
 };
 
 grammar;
@@ -20,13 +19,13 @@ Item: Item = {
 
 InductiveDefinition: InductiveDefinition = {
 	"inductive" <name:Ident> <constructors:("|" <ConstructorDefinition>)*> => {
-		InductiveDefinition { <> }
+		InductiveDefinition { name, constructors: constructors.into_iter().collect() }
 	},
 }
 
-ConstructorDefinition: ConstructorDefinition = {
-	<name:Ident> <args:("(" <Ident> ":" <Expr> ")")*> => {
-		ConstructorDefinition { <> }
+ConstructorDefinition: (String, ConstructorDefinition) = {
+	<name:Ident> <args:("(" <Ident> ":" <Expr> ")")*> ":" <codomain:Expr> => {
+		(name, ConstructorDefinition { args, codomain })
 	},
 }
 
@@ -41,15 +40,17 @@ Atom: Expr = {
 	Ident => Expr::Ident(<>),
 	"Type" => Expr::Universe,
 	"(" <Expr> ")",
-	"rec" "{" <argument:Ident> "}" => Expr::recursive_call(<>),
+	"rec" "{" <argument:Ident> "}" => Expr::RecursiveCall(<>),
 
 	"split" <argument:Expr> "to" <var:Ident> "=>" <family:Expr> <branches:Branch*> "." => {
 		Expr::split(<>)
 	},
 }
 
-Branch: Branch = {
-	"|" <constructor:Ident> <arguments:Ident*> "=>" <value:Expr> => Branch::new(<>),
+Branch: (String, Branch) = {
+	"|" <constructor:Ident> <arguments:Ident*> "=>" <value:Expr> => (
+		constructor, Branch { arguments, value }
+	),
 }
 
 pub Expr: Expr = {

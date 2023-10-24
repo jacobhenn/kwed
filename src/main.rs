@@ -2,11 +2,13 @@ mod ast;
 
 mod eval;
 
+use crate::{ast::Item, eval::Context};
+
 use anyhow::{bail, Context as _};
 
 use lalrpop_util::lalrpop_mod;
 
-use crate::{ast::Item, eval::Context};
+use tracing_subscriber::filter::EnvFilter;
 
 lalrpop_mod!(pub ast_parser);
 
@@ -45,6 +47,11 @@ fn test_remove_comments() {
 }
 
 fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt::Subscriber::builder()
+        .pretty()
+        .with_env_filter(EnvFilter::from_default_env())
+        .init();
+
     let path = std::env::args().skip(1).next().unwrap();
     let src = std::fs::read_to_string(path).context("failed to open file")?;
     let src = remove_comments(&src);

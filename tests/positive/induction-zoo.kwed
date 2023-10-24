@@ -6,15 +6,15 @@
 (~ ---------- elementary induction ---------- ~)
 
 inductive Bool
-	| Bool-false
-	| Bool-true
+	| Bool-false : Bool
+	| Bool-true : Bool
 .
 
-inductive Unit | unit.
+inductive Unit | unit : Unit.
 
 inductive Nat
-	| Nat-zero
-	| Nat-succ (n : Nat)
+	| Nat-zero : Nat
+	| Nat-succ (n : Nat) : Nat
 .
 
 n0 : Nat := Nat-zero.
