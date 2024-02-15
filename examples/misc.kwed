@@ -1,0 +1,14 @@
+inductive Nat: Type {
+	zero: Nat,
+	succ: Nat -> Nat,
+}
+
+def Nat.double(n: Nat): Nat =
+	match n to (fn _ => Nat) {
+		zero => zero,
+		succ m => succ (succ (rec m)),
+	}
+
+inductive Product(A: Type, B: A -> Type): Type {
+	pair: (a: A) -> (B a) -> Product A B,
+}
