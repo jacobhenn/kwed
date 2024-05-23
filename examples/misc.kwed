@@ -1,14 +1,19 @@
-inductive Nat: Type {
-	zero: Nat,
-	succ: Nat -> Nat,
+def id0(x: Type): Type
+{
+	x
 }
 
-def Nat.double(n: Nat): Nat =
-	match n to (fn _ => Nat) {
-		zero => zero,
-		succ m => succ (succ (rec m)),
-	}
+def id1: Type → Type
+{
+	[x: Type] x
+}
 
-inductive Product(A: Type, B: A -> Type): Type {
-	pair: (a: A) -> (B a) -> Product A B,
+def ap(f: Type → Type, x: Type): Type
+{
+	f x
+}
+
+def test_eta: id0 = ([x: Type] ap id1 x)
+{
+	refl id0
 }
