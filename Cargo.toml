@@ -12,6 +12,7 @@ logos2 = "0.13"
 chumsky = "0.9"
 uuid = { version = "1.7.0", features = ["v4", "macro-diagnostics"] }
 indexmap = "2.2.6"
-derivative = "2.2.0"
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "fmt"] }
+crossterm = "0.27.0"
+base64 = "0.22.1"

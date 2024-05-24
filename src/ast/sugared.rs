@@ -2,8 +2,9 @@ use super::{desugared, Ident, Path, Span};
 
 use std::{fmt::Display, rc::Rc};
 
-use derivative::Derivative;
 use indexmap::IndexMap;
+
+use uuid::Uuid;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Expr {
@@ -37,10 +38,8 @@ pub enum Expr {
     },
 }
 
-#[derive(Debug, Clone, Derivative)]
-#[derivative(PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Param {
-    #[derivative(PartialEq = "ignore")]
     pub name: Ident,
     pub ty: Expr,
 }
@@ -79,10 +78,12 @@ impl Expr {
             Expr::Path(path) => desugared::Expr::Path(path),
             Expr::Fn { param, body } => desugared::Expr::Fn {
                 param: Rc::new(Rc::unwrap_or_clone(param).desugared()),
+                id: Uuid::new_v4(),
                 body: Rc::new(Rc::unwrap_or_clone(body).desugared()),
             },
             Expr::FnType { param, cod } => desugared::Expr::FnType {
                 param: Rc::new(Rc::unwrap_or_clone(param).desugared()),
+                id: Uuid::new_v4(),
                 cod: Rc::new(Rc::unwrap_or_clone(cod).desugared()),
             },
             Expr::FnApp { func, arg } => desugared::Expr::FnApp {
@@ -130,6 +131,7 @@ impl Item {
                     .iter()
                     .rfold(ty.desugared(), |acc, param| desugared::Expr::FnType {
                         param: Rc::new(param.clone().desugared()),
+                        id: Uuid::new_v4(),
                         cod: Rc::new(acc),
                     });
 
@@ -137,6 +139,7 @@ impl Item {
                     args.into_iter()
                         .rfold(val.desugared(), |acc, param| desugared::Expr::Fn {
                             param: Rc::new(param.desugared()),
+                            id: Uuid::new_v4(),
                             body: Rc::new(acc),
                         });
 

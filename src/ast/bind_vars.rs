@@ -7,21 +7,27 @@ use std::{mem, rc::Rc};
 
 use anyhow::Result;
 
+use uuid::Uuid;
+
 #[derive(Debug, Clone)]
 enum Context {
     Empty,
-    Var(Box<Self>, Ident),
+    Var {
+        outer: Box<Self>,
+        name: Ident,
+        id: Uuid,
+    },
 }
 
 impl Context {
-    fn idx(&self, search_name: &Ident) -> Option<usize> {
+    fn id(&self, search_name: &Ident) -> Option<Uuid> {
         match self {
             Context::Empty => None,
-            Context::Var(outer, name) => {
+            Context::Var { outer, name, id } => {
                 if name == search_name {
-                    Some(0)
+                    Some(*id)
                 } else {
-                    outer.idx(search_name).map(|i| i + 1)
+                    outer.id(search_name)
                 }
             }
         }
@@ -32,25 +38,36 @@ impl Expr {
     fn bind_vars(&mut self, ctx: &Context) -> Result<()> {
         match self {
             Expr::TypeType => (),
-            Expr::Var(..) => (),
+            Expr::Var { .. } => (),
             Expr::Path(path) => {
                 if let [name] = &mut path.components[..] {
-                    if let Some(idx) = ctx.idx(name) {
-                        *self = Self::Var(idx);
+                    if let Some(id) = ctx.id(name) {
+                        *self = Self::Var {
+                            id,
+                            name: mem::take(name),
+                        };
                     }
                 }
             }
-            Expr::Fn { param, body } => {
+            Expr::Fn { param, id, body } => {
                 Rc::make_mut(param).ty.bind_vars(&ctx)?;
 
-                let ctx = Context::Var(Box::new(ctx.clone()), param.name.clone());
+                let ctx = Context::Var {
+                    outer: Box::new(ctx.clone()),
+                    name: param.name.clone(),
+                    id: *id,
+                };
 
                 Rc::make_mut(body).bind_vars(&ctx)?;
             }
-            Expr::FnType { param, cod } => {
+            Expr::FnType { param, id, cod } => {
                 Rc::make_mut(param).ty.bind_vars(ctx)?;
 
-                let ctx = Context::Var(Box::new(ctx.clone()), param.name.clone());
+                let ctx = Context::Var {
+                    outer: Box::new(ctx.clone()),
+                    name: param.name.clone(),
+                    id: *id,
+                };
 
                 Rc::make_mut(cod).bind_vars(&ctx)?;
             }
