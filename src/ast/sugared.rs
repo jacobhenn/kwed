@@ -8,16 +8,19 @@ use uuid::Uuid;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Expr {
+    /// An error node representing an expression which failed to parse.
+    Error,
+
     TypeType,
 
     Path(Path),
 
     Fn {
-        param: Rc<Param>,
+        params: Params,
         body: Rc<Self>,
     },
     FnType {
-        param: Rc<Param>,
+        params: Params,
         cod: Rc<Self>,
     },
     FnApp {
@@ -34,15 +37,18 @@ pub enum Expr {
     Match {
         arg: Rc<Self>,
         cod: Rc<Self>,
-        arms: Vec<MatchArm>,
+        arms: Option<Vec<MatchArm>>,
     },
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Param {
-    pub name: Ident,
+    pub names: Vec<Ident>,
     pub ty: Expr,
 }
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Params(pub Vec<Param>);
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct MatchArm {
@@ -53,11 +59,7 @@ pub struct MatchArm {
 
 #[derive(Debug, PartialEq)]
 pub enum Item {
-    Def {
-        args: Vec<Param>,
-        ty: Expr,
-        val: Expr,
-    },
+    Def { args: Params, ty: Expr, val: Expr },
 }
 
 #[derive(Debug, PartialEq)]
@@ -74,18 +76,39 @@ impl Display for Expr {
 impl Expr {
     fn desugared(self) -> desugared::Expr {
         match self {
+            Expr::Error => panic!("Error node made it through to desugaring"),
             Expr::TypeType => desugared::Expr::TypeType,
             Expr::Path(path) => desugared::Expr::Path(path),
-            Expr::Fn { param, body } => desugared::Expr::Fn {
-                param: Rc::new(Rc::unwrap_or_clone(param).desugared()),
-                id: Uuid::new_v4(),
-                body: Rc::new(Rc::unwrap_or_clone(body).desugared()),
-            },
-            Expr::FnType { param, cod } => desugared::Expr::FnType {
-                param: Rc::new(Rc::unwrap_or_clone(param).desugared()),
-                id: Uuid::new_v4(),
-                cod: Rc::new(Rc::unwrap_or_clone(cod).desugared()),
-            },
+            Expr::Fn {
+                params: Params(params),
+                body,
+            } => {
+                let body = Rc::new(Rc::unwrap_or_clone(body).desugared());
+
+                params.into_iter().map(Param::desugared).flatten().rfold(
+                    Rc::unwrap_or_clone(body),
+                    |acc, param| desugared::Expr::Fn {
+                        param: Rc::new(param),
+                        id: Uuid::new_v4(),
+                        body: Rc::new(acc),
+                    },
+                )
+            }
+            Expr::FnType {
+                params: Params(params),
+                cod,
+            } => {
+                let cod = Rc::new(Rc::unwrap_or_clone(cod).desugared());
+
+                params.into_iter().map(Param::desugared).flatten().rfold(
+                    Rc::unwrap_or_clone(cod),
+                    |acc, param| desugared::Expr::FnType {
+                        param: Rc::new(param),
+                        id: Uuid::new_v4(),
+                        cod: Rc::new(acc),
+                    },
+                )
+            }
             Expr::FnApp { func, arg } => desugared::Expr::FnApp {
                 func: Rc::new(Rc::unwrap_or_clone(func).desugared()),
                 arg: Rc::new(Rc::unwrap_or_clone(arg).desugared()),
@@ -98,18 +121,27 @@ impl Expr {
             Expr::Match { arg, cod, arms } => desugared::Expr::Match {
                 arg: Rc::new(Rc::unwrap_or_clone(arg).desugared()),
                 cod: Rc::new(Rc::unwrap_or_clone(cod).desugared()),
-                arms: arms.into_iter().map(MatchArm::desugared).collect(),
+                arms: arms
+                    .expect("error nodes should not make it to desugaring")
+                    .into_iter()
+                    .map(MatchArm::desugared)
+                    .collect(),
             },
         }
     }
 }
 
 impl Param {
-    fn desugared(self) -> desugared::Param {
-        desugared::Param {
-            name: self.name,
-            ty: self.ty.desugared(),
-        }
+    fn desugared(self) -> Vec<desugared::Param> {
+        let ty = self.ty.desugared();
+
+        self.names
+            .into_iter()
+            .map(|name| desugared::Param {
+                name,
+                ty: ty.clone(),
+            })
+            .collect()
     }
 }
 
@@ -126,22 +158,30 @@ impl MatchArm {
 impl Item {
     fn desugared(self) -> desugared::Item {
         match self {
-            Item::Def { args, ty, val } => {
-                let ty = args
+            Item::Def {
+                args: Params(params),
+                ty,
+                val,
+            } => {
+                let ty = params
                     .iter()
+                    .cloned()
+                    .map(Param::desugared)
+                    .flatten()
                     .rfold(ty.desugared(), |acc, param| desugared::Expr::FnType {
-                        param: Rc::new(param.clone().desugared()),
+                        param: Rc::new(param),
                         id: Uuid::new_v4(),
                         cod: Rc::new(acc),
                     });
 
-                let val =
-                    args.into_iter()
-                        .rfold(val.desugared(), |acc, param| desugared::Expr::Fn {
-                            param: Rc::new(param.desugared()),
-                            id: Uuid::new_v4(),
-                            body: Rc::new(acc),
-                        });
+                let val = params.into_iter().map(Param::desugared).flatten().rfold(
+                    val.desugared(),
+                    |acc, param| desugared::Expr::Fn {
+                        param: Rc::new(param),
+                        id: Uuid::new_v4(),
+                        body: Rc::new(acc),
+                    },
+                );
 
                 desugared::Item::Def { ty, val }
             }

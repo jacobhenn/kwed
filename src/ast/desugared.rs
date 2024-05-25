@@ -91,7 +91,7 @@ impl Display for Expr {
             ),
             Expr::FnType { param, id, cod } => write!(
                 f,
-                "({}: {}) -> {cod}",
+                "({}: {}) → {cod}",
                 param.name.name.as_str().with(uuid_color(*id)),
                 param.ty
             ),

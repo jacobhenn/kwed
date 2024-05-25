@@ -1,19 +1,12 @@
-def id0(x: Type): Type
+def ap(
+	A B: Type,
+	f: A → B,
+	x y: A,
+	p: x = y,
+): (f x) = (f y)
 {
-	x
-}
-
-def id1: Type → Type
-{
-	[x: Type] x
-}
-
-def ap(f: Type → Type, x: Type): Type
-{
-	f x
-}
-
-def test_eta: id0 = ([x: Type] ap id1 x)
-{
-	refl id0
+	match p to [x y: A, _: x = y] (f x) = (f y)
+	{
+		refl z => refl f z,
+	}
 }

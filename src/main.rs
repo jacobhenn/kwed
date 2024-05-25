@@ -1,4 +1,6 @@
 #![feature(iter_intersperse)]
+#![feature(exact_size_is_empty)]
+#![feature(assert_matches)]
 
 mod ast;
 
@@ -37,13 +39,16 @@ fn main() -> Result<()> {
     let mut files: SimpleFiles<&str, &str> = SimpleFiles::new();
     let file_id = files.add(&path, &src);
 
-    let module = match ast::sugared::Module::parse_final().parse_recovery(src.as_str()) {
-        (Some(module), _errs) => module,
-        (None, errs) => {
-            err::emit(errs, file_id, &files)?;
-            return Ok(());
-        }
+    let (module, errs) = ast::sugared::Module::parse_final().parse_recovery_verbose(src.as_str());
+
+    if !errs.is_empty() {
+        debug!("recovered AST: {module:#?}");
+
+        err::emit_parse_err(errs, file_id, &files)?;
+        return Ok(());
     };
+
+    let module = module.expect("errorless parsing should be successful");
 
     debug!("parsed module: {module:#?}");
 
