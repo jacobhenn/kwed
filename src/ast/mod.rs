@@ -28,6 +28,18 @@ pub struct Path {
     pub components: Vec<Ident>,
 }
 
+impl Path {
+    pub fn parent(self) -> Self {
+        let [parent_components @ .., _] = &self.components[..] else {
+            panic!("paths should not be empty");
+        };
+
+        Self {
+            components: parent_components.to_vec(),
+        }
+    }
+}
+
 impl Display for Path {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(

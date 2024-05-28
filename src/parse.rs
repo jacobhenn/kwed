@@ -3,11 +3,12 @@ use crate::ast::{
     Ident, Path,
 };
 
-use std::{assert_matches::assert_matches, rc::Rc};
+use std::rc::Rc;
+
+#[cfg(test)]
+use std::assert_matches::assert_matches;
 
 use chumsky::prelude::*;
-
-use tracing::trace;
 
 fn comment() -> impl Parser<char, (), Error = Simple<char>> + Clone {
     just("//")
@@ -20,11 +21,12 @@ fn pad() -> impl Parser<char, (), Error = Simple<char>> + Clone {
     comment().padded().repeated().padded().ignored()
 }
 
-const SPECIAL_CHARS: &[char] = &['.', ',', ':', '\'', '"', '{', '}', '(', ')', '[', ']', '/'];
+const SPECIAL_CHARS: &[char] = &['.', ',', ':', '{', '}', '(', ')', '[', ']'];
 
 const RESERVED_IDENTS: &[&str] = &[
     "def",
     "match",
+    "rec",
     "to",
     "inductive",
     "struct",
@@ -36,6 +38,7 @@ const RESERVED_IDENTS: &[&str] = &[
     "=",
     "=>",
     "→",
+    "//",
 ];
 
 impl Ident {
@@ -85,6 +88,8 @@ impl Param {
             .repeated()
             .at_least(1)
             .then_ignore(just(':').padded_by(pad()))
+            .or_not()
+            .map(|names| names.unwrap_or(vec![Ident::new("●")]))
             .then(expr)
             .map(|(names, ty)| Self { names, ty })
             .labelled("parameter")
@@ -106,35 +111,44 @@ impl Params {
 }
 
 impl Item {
-    // pub fn parse_inductive_def() -> impl Parser<char, (Path, Self), Error = Simple<char>> {
-    //     text::keyword("inductive")
-    //         .ignore_then(Path::parse().padded_by(pad()))
-    //         .then(
-    //             Param::parse_list(Expr::parse())
-    //                 .padded_by(pad())
-    //                 .delimited_by(just('('), just(')'))
-    //                 .or_not(),
-    //         )
-    //         .then_ignore(just(':').padded_by(pad()))
-    //         .then(Expr::parse().padded_by(pad()))
-    //         .then(
-    //             Param::parse_list(Expr::parse())
-    //                 .padded_by(pad())
-    //                 .delimited_by(just('{'), just('}')),
-    //         )
-    //         .map(|(((name, args), ty), constructors)| {
-    //             (
-    //                 name,
-    //                 Self::InductiveDef {
-    //                     args: args.unwrap_or_else(Vec::new),
-    //                     ty,
-    //                     constructors,
-    //                 },
-    //             )
-    //         })
-    //         .labelled("inductive definition")
-    //         .debug("inductive definition")
-    // }
+    pub fn parse_inductive() -> impl Parser<char, (Path, Self), Error = Simple<char>> {
+        text::keyword("inductive")
+            .ignore_then(Path::parse().padded_by(pad()))
+            .then(
+                Params::parse(Expr::parse())
+                    .padded_by(pad())
+                    .delimited_by(just('('), just(')'))
+                    .or_not(),
+            )
+            .then_ignore(just(':').padded_by(pad()))
+            .then(Expr::parse().padded_by(pad()))
+            .then(
+                Params::parse(Expr::parse())
+                    .padded_by(pad())
+                    .delimited_by(just('{'), just('}')),
+            )
+            .map(|(((name, params), ty), constructors)| {
+                (
+                    name,
+                    Self::Inductive {
+                        params: params.unwrap_or_default(),
+                        ty,
+                        constructors,
+                    },
+                )
+            })
+            .labelled("inductive definition")
+            .debug("inductive definition")
+    }
+
+    pub fn parse_axiom() -> impl Parser<char, (Path, Self), Error = Simple<char>> {
+        text::keyword("axiom")
+            .ignore_then(Path::parse().padded_by(pad()))
+            .then_ignore(just(':').padded_by(pad()))
+            .then(Expr::parse().padded_by(pad()))
+            .then_ignore(just(';'))
+            .map(|(name, ty)| (name, Self::Axiom { ty }))
+    }
 
     pub fn parse_def() -> impl Parser<char, (Path, Self), Error = Simple<char>> {
         text::keyword("def")
@@ -168,10 +182,13 @@ impl Item {
     }
 
     pub fn parse() -> impl Parser<char, (Path, Self), Error = Simple<char>> {
-        // choice((Self::parse_inductive_def(), Self::parse_def()))
-        //     .labelled("item")
-        //     .debug("item")
-        Self::parse_def()
+        choice((
+            Self::parse_def(),
+            Self::parse_axiom(),
+            Self::parse_inductive(),
+        ))
+        .labelled("item")
+        .debug("item")
     }
 }
 
@@ -179,12 +196,7 @@ impl MatchArm {
     pub fn parse<'a>(
         expr: impl Parser<char, Expr, Error = Simple<char>> + 'a,
     ) -> impl Parser<char, Self, Error = Simple<char>> + 'a {
-        let refl_path = Path {
-            components: vec![Ident::new("refl")],
-        };
-
-        Path::parse()
-            .or(text::keyword("refl").to(refl_path))
+        Ident::parse()
             .then(Ident::parse().padded_by(pad()).repeated())
             .then_ignore(just("=>").padded_by(pad()))
             .then(expr)
@@ -232,7 +244,7 @@ impl Expr {
             .delimited_by(just('('), just(')'))
             .or(Expr::parse_atomic(expr.clone()).map(|ty| {
                 Params(vec![Param {
-                    names: vec![Ident::new("")],
+                    names: vec![Ident::new("●")],
                     ty,
                 }])
             }))
@@ -308,6 +320,12 @@ impl Expr {
             .debug("match expression")
     }
 
+    pub fn parse_rec<'a>() -> impl Parser<char, Self, Error = Simple<char>> + 'a {
+        text::keyword("rec")
+            .ignore_then(Ident::parse().padded_by(pad()))
+            .map(Self::Rec)
+    }
+
     pub fn parse_in_parens<'a>(
         expr: impl Parser<char, Expr, Error = Simple<char>> + 'a,
     ) -> impl Parser<char, Self, Error = Simple<char>> + 'a {
@@ -321,6 +339,7 @@ impl Expr {
     ) -> impl Parser<char, Self, Error = Simple<char>> + 'a {
         choice((
             Self::parse_type_type(),
+            Self::parse_rec(),
             Self::parse_path(),
             Self::parse_in_parens(expr),
         ))

@@ -1,12 +1,20 @@
-def ap(
-	A B: Type,
-	f: A → B,
-	x y: A,
-	p: x = y,
-): (f x) = (f y)
+inductive ℕ: Type
 {
-	match p to [x y: A, _: x = y] (f x) = (f y)
+	0: ℕ,
+	suc: ℕ → ℕ,
+}
+
+inductive Vec(A: Type): ℕ → Type
+{
+	nil: Vec A ℕ.0,
+	cons: (n: ℕ, Vec A n, A) → Vec A (ℕ.suc n),
+}
+
+def prepend(A: Type, n: ℕ, v: Vec A n, a: A): Vec A (ℕ.suc n)
+{
+	match v to [n: ℕ, Vec A n] Vec A (ℕ.suc n)
 	{
-		refl z => refl f z,
+		nil => Vec.cons A ℕ.0 (Vec.nil A) a,
+		cons n' v' a' => Vec.cons A n (rec v') a',
 	}
 }

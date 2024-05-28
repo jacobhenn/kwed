@@ -1,6 +1,6 @@
-use super::{desugared, Ident, Path, Span};
+use super::{desugared, Ident, Path};
 
-use std::{fmt::Display, rc::Rc};
+use std::rc::Rc;
 
 use indexmap::IndexMap;
 
@@ -39,6 +39,7 @@ pub enum Expr {
         cod: Rc<Self>,
         arms: Option<Vec<MatchArm>>,
     },
+    Rec(Ident),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -52,25 +53,31 @@ pub struct Params(pub Vec<Param>);
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct MatchArm {
-    pub constructor: Path,
+    pub constructor: Ident,
     pub args: Vec<Ident>,
     pub body: Expr,
 }
 
 #[derive(Debug, PartialEq)]
 pub enum Item {
-    Def { args: Params, ty: Expr, val: Expr },
+    Def {
+        args: Params,
+        ty: Expr,
+        val: Expr,
+    },
+    Axiom {
+        ty: Expr,
+    },
+    Inductive {
+        params: Params,
+        ty: Expr,
+        constructors: Params,
+    },
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Module {
     pub items: IndexMap<Path, Item>,
-}
-
-impl Display for Expr {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        todo!()
-    }
 }
 
 impl Expr {
@@ -85,14 +92,17 @@ impl Expr {
             } => {
                 let body = Rc::new(Rc::unwrap_or_clone(body).desugared());
 
-                params.into_iter().map(Param::desugared).flatten().rfold(
-                    Rc::unwrap_or_clone(body),
-                    |acc, param| desugared::Expr::Fn {
-                        param: Rc::new(param),
-                        id: Uuid::new_v4(),
-                        body: Rc::new(acc),
-                    },
-                )
+                params
+                    .into_iter()
+                    .map(Param::desugared)
+                    .flatten()
+                    .map(desugared::Param::binding)
+                    .rfold(Rc::unwrap_or_clone(body), |acc, param| {
+                        desugared::Expr::Fn {
+                            param: Rc::new(param),
+                            body: Rc::new(acc),
+                        }
+                    })
             }
             Expr::FnType {
                 params: Params(params),
@@ -100,14 +110,17 @@ impl Expr {
             } => {
                 let cod = Rc::new(Rc::unwrap_or_clone(cod).desugared());
 
-                params.into_iter().map(Param::desugared).flatten().rfold(
-                    Rc::unwrap_or_clone(cod),
-                    |acc, param| desugared::Expr::FnType {
-                        param: Rc::new(param),
-                        id: Uuid::new_v4(),
-                        cod: Rc::new(acc),
-                    },
-                )
+                params
+                    .into_iter()
+                    .map(Param::desugared)
+                    .flatten()
+                    .map(desugared::Param::binding)
+                    .rfold(Rc::unwrap_or_clone(cod), |acc, param| {
+                        desugared::Expr::FnType {
+                            param: Rc::new(param),
+                            cod: Rc::new(acc),
+                        }
+                    })
             }
             Expr::FnApp { func, arg } => desugared::Expr::FnApp {
                 func: Rc::new(Rc::unwrap_or_clone(func).desugared()),
@@ -126,6 +139,10 @@ impl Expr {
                     .into_iter()
                     .map(MatchArm::desugared)
                     .collect(),
+            },
+            Expr::Rec(name) => desugared::Expr::Rec {
+                name,
+                id: Uuid::new_v4(),
             },
         }
     }
@@ -149,7 +166,11 @@ impl MatchArm {
     fn desugared(self) -> desugared::MatchArm {
         desugared::MatchArm {
             constructor: self.constructor,
-            args: self.args,
+            args: self
+                .args
+                .into_iter()
+                .map(|arg| (Uuid::new_v4(), arg))
+                .collect(),
             body: self.body.desugared(),
         }
     }
@@ -168,23 +189,43 @@ impl Item {
                     .cloned()
                     .map(Param::desugared)
                     .flatten()
+                    .map(desugared::Param::binding)
                     .rfold(ty.desugared(), |acc, param| desugared::Expr::FnType {
                         param: Rc::new(param),
-                        id: Uuid::new_v4(),
                         cod: Rc::new(acc),
                     });
 
-                let val = params.into_iter().map(Param::desugared).flatten().rfold(
-                    val.desugared(),
-                    |acc, param| desugared::Expr::Fn {
+                let val = params
+                    .into_iter()
+                    .map(Param::desugared)
+                    .flatten()
+                    .map(desugared::Param::binding)
+                    .rfold(val.desugared(), |acc, param| desugared::Expr::Fn {
                         param: Rc::new(param),
-                        id: Uuid::new_v4(),
                         body: Rc::new(acc),
-                    },
-                );
+                    });
 
                 desugared::Item::Def { ty, val }
             }
+            Item::Axiom { ty } => desugared::Item::Axiom { ty: ty.desugared() },
+            Item::Inductive {
+                params: Params(params),
+                ty,
+                constructors: Params(constructors),
+            } => desugared::Item::Inductive {
+                params: params
+                    .into_iter()
+                    .map(Param::desugared)
+                    .flatten()
+                    .map(desugared::Param::binding)
+                    .collect(),
+                ty: ty.desugared(),
+                constructors: constructors
+                    .into_iter()
+                    .map(Param::desugared)
+                    .flatten()
+                    .collect(),
+            },
         }
     }
 }

@@ -1,6 +1,7 @@
 #![feature(iter_intersperse)]
 #![feature(exact_size_is_empty)]
 #![feature(assert_matches)]
+#![feature(let_chains)]
 
 mod ast;
 
@@ -62,11 +63,9 @@ fn main() -> Result<()> {
 
     let mut checked_module = Module::new();
 
-    for (name, mut item) in desugared_module.items {
-        item.type_check(&checked_module)?;
-        item.eval(&checked_module)?;
-
-        checked_module.items.insert(name, item);
+    for (path, item) in desugared_module.items {
+        item.type_check(&path, &checked_module)?;
+        item.eval_and_insert(path, &mut checked_module)?;
     }
 
     info!("type checking successful");

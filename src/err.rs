@@ -1,4 +1,4 @@
-use std::fmt::Write;
+use std::{fmt::Write, ops::Range};
 
 use anyhow::Result;
 
@@ -13,6 +13,12 @@ use codespan_reporting::{
     },
 };
 
+fn convert_span(src: &str, span: Range<usize>) -> Range<usize> {
+    let start = src.char_indices().nth(span.start).unwrap().0;
+    let end = src.char_indices().nth(span.end).unwrap().0;
+    start..end
+}
+
 pub fn emit_parse_err<'files>(
     errs: impl IntoIterator<Item = Simple<char>>,
     file_id: usize,
@@ -20,6 +26,11 @@ pub fn emit_parse_err<'files>(
 ) -> Result<()> {
     let writer = StandardStream::stderr(ColorChoice::Auto);
     let config = codespan_reporting::term::Config::default();
+
+    let src = files
+        .get(file_id)
+        .expect("file id should be valid")
+        .source();
 
     for err in errs {
         let diagnostic = match err.reason() {
@@ -42,7 +53,7 @@ pub fn emit_parse_err<'files>(
 
                 Diagnostic::error()
                     .with_message(message)
-                    .with_labels(vec![Label::primary(file_id, err.span())])
+                    .with_labels(vec![Label::primary(file_id, convert_span(src, err.span()))])
             }
             SimpleReason::Unclosed { span, delimiter } => {
                 let message = format!("Unclosed `{delimiter}`");
@@ -50,8 +61,9 @@ pub fn emit_parse_err<'files>(
                 let label_msg = "Opened here".to_string();
 
                 Diagnostic::error().with_message(message).with_labels(vec![
-                    Label::primary(file_id, err.span()),
-                    Label::secondary(file_id, span.clone()).with_message(label_msg),
+                    Label::primary(file_id, convert_span(src, err.span())),
+                    Label::secondary(file_id, convert_span(src, span.clone()))
+                        .with_message(label_msg),
                 ])
             }
             SimpleReason::Custom(custom_msg) => {
@@ -65,7 +77,7 @@ pub fn emit_parse_err<'files>(
 
                 Diagnostic::error()
                     .with_message(message)
-                    .with_labels(vec![Label::primary(file_id, err.span())])
+                    .with_labels(vec![Label::primary(file_id, convert_span(src, err.span()))])
             }
         };
 
