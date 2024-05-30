@@ -38,18 +38,19 @@ impl Context {
 impl Expr {
     fn bind_vars(&mut self, ctx: &Context) -> Result<()> {
         match self {
-            Expr::TypeType | Expr::Var { .. } => (),
-            Expr::Path(path) => {
+            Expr::TypeType { .. } | Expr::Var { .. } => (),
+            Expr::Path { path, span } => {
                 if let [name] = &mut path.components[..] {
                     if let Some(id) = ctx.id(name) {
                         *self = Self::Var {
                             id,
                             name: mem::take(name),
+                            span: mem::take(span),
                         };
                     }
                 }
             }
-            Expr::Fn { param, body } => {
+            Expr::Fn { param, body, .. } => {
                 Rc::make_mut(param).ty.bind_vars(&ctx)?;
 
                 let ctx = Context::Var {
@@ -60,7 +61,7 @@ impl Expr {
 
                 Rc::make_mut(body).bind_vars(&ctx)?;
             }
-            Expr::FnType { param, cod } => {
+            Expr::FnType { param, cod, .. } => {
                 Rc::make_mut(param).ty.bind_vars(ctx)?;
 
                 let ctx = Context::Var {
@@ -71,16 +72,11 @@ impl Expr {
 
                 Rc::make_mut(cod).bind_vars(&ctx)?;
             }
-            Expr::FnApp { func, arg } => {
+            Expr::FnApp { func, arg, .. } => {
                 Rc::make_mut(func).bind_vars(ctx)?;
                 Rc::make_mut(arg).bind_vars(ctx)?;
             }
-            Expr::Eq { lhs, rhs } => {
-                Rc::make_mut(lhs).bind_vars(ctx)?;
-                Rc::make_mut(rhs).bind_vars(ctx)?;
-            }
-            Expr::Refl(arg) => Rc::make_mut(arg).bind_vars(ctx)?,
-            Expr::Match { arg, cod, arms } => {
+            Expr::Match { arg, cod, arms, .. } => {
                 Rc::make_mut(arg).bind_vars(ctx)?;
                 Rc::make_mut(cod).bind_vars(ctx)?;
                 for arm in arms {
@@ -97,7 +93,7 @@ impl Expr {
                     arm.body.bind_vars(&ctx)?;
                 }
             }
-            Expr::Rec { id, name } => {
+            Expr::Rec { id, var: name, .. } => {
                 if let Some(bound_id) = ctx.id(name) {
                     *id = bound_id;
                 }

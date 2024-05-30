@@ -212,11 +212,15 @@ impl MatchArm {
 
 impl Expr {
     pub fn parse_type_type() -> impl Parser<char, Self, Error = Simple<char>> {
-        text::keyword("Type").to(Self::TypeType).debug("type type")
+        text::keyword("Type")
+            .map_with_span(|_, span| Self::TypeType { span })
+            .debug("type type")
     }
 
     pub fn parse_path() -> impl Parser<char, Self, Error = Simple<char>> {
-        Path::parse().map(Self::Path).debug("path expression")
+        Path::parse()
+            .map_with_span(|path, span| Self::Path { path, span })
+            .debug("path expression")
     }
 
     pub fn parse_fn<'a>(
@@ -227,9 +231,10 @@ impl Expr {
             .delimited_by(just('['), just(']'))
             .padded_by(pad())
             .then(expr)
-            .map(|(params, body)| Self::Fn {
+            .map_with_span(|(params, body), span| Self::Fn {
                 params,
-                body: Rc::new(body),
+                body: Box::new(body),
+                span,
             })
             .recover_with(nested_delimiters('[', ']', [], |_| Expr::Error))
             .labelled("function")
@@ -250,9 +255,10 @@ impl Expr {
             }))
             .then_ignore(just("→").padded_by(pad()))
             .then(expr)
-            .map(|(params, cod)| Self::FnType {
+            .map_with_span(|(params, cod), span| Self::FnType {
                 params,
-                cod: Rc::new(cod),
+                cod: Box::new(cod),
+                span,
             })
             .labelled("function type")
             .debug("function type")
@@ -263,36 +269,13 @@ impl Expr {
     ) -> impl Parser<char, Self, Error = Simple<char>> + 'a {
         Expr::parse_atomic(expr.clone())
             .then(Expr::parse_atomic(expr).padded_by(pad()).repeated())
-            .foldl(|func, arg| Self::FnApp {
-                func: Rc::new(func),
-                arg: Rc::new(arg),
+            .map_with_span(|(func, args), span| Self::FnApp {
+                func: Box::new(func),
+                args,
+                span,
             })
             .labelled("function application")
             .debug("function application")
-    }
-
-    pub fn parse_eq<'a>(
-        expr: impl Parser<char, Expr, Error = Simple<char>> + Clone + 'a,
-    ) -> impl Parser<char, Self, Error = Simple<char>> + 'a {
-        Expr::parse_atomic(expr.clone())
-            .then_ignore(just('=').padded_by(pad()))
-            .then(Expr::parse_atomic(expr))
-            .map(|(lhs, rhs)| Expr::Eq {
-                lhs: Rc::new(lhs),
-                rhs: Rc::new(rhs),
-            })
-            .labelled("identity type")
-            .debug("identity type")
-    }
-
-    pub fn parse_refl<'a>(
-        expr: impl Parser<char, Expr, Error = Simple<char>> + 'a,
-    ) -> impl Parser<char, Self, Error = Simple<char>> + 'a {
-        text::keyword("refl")
-            .ignore_then(expr.padded_by(pad()))
-            .map(|arg| Expr::Refl(Rc::new(arg)))
-            .labelled("reflexivity invocation")
-            .debug("reflexivity invocation")
     }
 
     pub fn parse_match<'a>(
@@ -311,10 +294,11 @@ impl Expr {
                     .map(Some)
                     .recover_with(nested_delimiters('{', '}', [], |_| None)),
             )
-            .map(|((arg, cod), arms)| Self::Match {
-                arg: Rc::new(arg),
-                cod: Rc::new(cod),
+            .map_with_span(|((arg, cod), arms), span| Self::Match {
+                arg: Box::new(arg),
+                cod: Box::new(cod),
                 arms,
+                span,
             })
             .labelled("match expression")
             .debug("match expression")
@@ -323,7 +307,7 @@ impl Expr {
     pub fn parse_rec<'a>() -> impl Parser<char, Self, Error = Simple<char>> + 'a {
         text::keyword("rec")
             .ignore_then(Ident::parse().padded_by(pad()))
-            .map(Self::Rec)
+            .map_with_span(|var, span| Self::Rec { var, span })
     }
 
     pub fn parse_in_parens<'a>(
@@ -350,9 +334,7 @@ impl Expr {
         recursive(|expr| {
             choice((
                 Self::parse_match(expr.clone()),
-                Self::parse_refl(expr.clone()),
                 Self::parse_fn_type(expr.clone()),
-                Self::parse_eq(expr.clone()),
                 Self::parse_fn_application(expr.clone()),
                 Self::parse_fn(expr.clone()),
                 Self::parse_atomic(expr),

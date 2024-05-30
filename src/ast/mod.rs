@@ -8,7 +8,7 @@ use std::{fmt::Display, ops::Range, path::PathBuf};
 
 #[derive(PartialEq, Eq, Debug, Hash, Clone, Default)]
 pub struct Span {
-    pub file: PathBuf,
+    pub file_id: usize,
     pub range: Range<usize>,
 }
 
@@ -17,15 +17,15 @@ pub struct Ident {
     pub name: String,
 }
 
-impl Display for Ident {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.name)
-    }
-}
-
 #[derive(PartialEq, Eq, Debug, Hash, Clone)]
 pub struct Path {
     pub components: Vec<Ident>,
+}
+
+impl Span {
+    pub fn new(file_id: usize, range: Range<usize>) -> Self {
+        Self { file_id, range }
+    }
 }
 
 impl Path {
@@ -37,6 +37,12 @@ impl Path {
         Self {
             components: parent_components.to_vec(),
         }
+    }
+}
+
+impl Display for Ident {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.name)
     }
 }
 

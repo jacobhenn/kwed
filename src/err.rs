@@ -1,6 +1,6 @@
-use std::{fmt::Write, ops::Range};
+use crate::ast::Span;
 
-use anyhow::Result;
+use std::{fmt::Write, ops::Range};
 
 use chumsky::{error::SimpleReason, prelude::Simple};
 
@@ -13,20 +13,98 @@ use codespan_reporting::{
     },
 };
 
-fn convert_span(src: &str, span: Range<usize>) -> Range<usize> {
-    let start = src.char_indices().nth(span.start).unwrap().0;
+fn convert_span(src: &str, mut span: Range<usize>) -> Range<usize> {
+    let start = src
+        .char_indices()
+        .skip(span.start - 1)
+        .find(|(_, c)| !c.is_whitespace())
+        .unwrap()
+        .0;
+
+    while src.chars().nth(span.end - 1).unwrap().is_whitespace() {
+        span.end -= 1;
+    }
+
     let end = src.char_indices().nth(span.end).unwrap().0;
+
     start..end
+}
+
+pub struct Error {
+    pub span: Option<Span>,
+    pub message: String,
+    pub labels: Vec<(Option<Span>, String)>,
+}
+
+pub type Result<T, E = Error> = std::result::Result<T, E>;
+
+#[macro_export]
+macro_rules! bail {
+    ( $span:expr, $fmt:literal $(, $($arg:expr),+)? $(; $secondary_span: expr, $secondary_fmt:literal $(, $($secondary_arg:expr),+)?)* ) => {
+        return Err($crate::err::Error {
+            span: $span,
+            message: format!($fmt, $($($arg),+)?),
+            labels: vec![$(($secondary_span, format!($secondary_fmt, $($($secondary_arg),+)?))),*],
+        })
+    };
+}
+
+impl Error {
+    fn convert_spans<'files>(&mut self, files: &SimpleFiles<&str, &str>) {
+        if let Some(span) = &mut self.span {
+            let src = files
+                .get(span.file_id)
+                .expect("file id should be valid")
+                .source();
+
+            span.range = convert_span(src, span.range.clone());
+        }
+
+        for (span, _) in &mut self.labels {
+            if let Some(span) = span {
+                let src = files
+                    .get(span.file_id)
+                    .expect("file id should be valid")
+                    .source();
+
+                span.range = convert_span(src, span.range.clone());
+            }
+        }
+    }
+
+    pub fn emit<'files>(mut self, files: &SimpleFiles<&str, &str>) -> anyhow::Result<()> {
+        self.convert_spans(files);
+
+        let mut labels = Vec::new();
+
+        if let Some(span) = &self.span {
+            labels.push(Label::primary(span.file_id, span.range.clone()));
+        }
+
+        for (span, msg) in self.labels {
+            if let Some(span) = span {
+                labels.push(Label::secondary(span.file_id, span.range.clone()).with_message(msg));
+            }
+        }
+
+        let diagnostic = Diagnostic::error()
+            .with_message(self.message)
+            .with_labels(labels);
+
+        let writer = StandardStream::stderr(ColorChoice::Auto);
+        let config = codespan_reporting::term::Config::default();
+
+        term::emit(&mut writer.lock(), &config, files, &diagnostic)?;
+
+        Ok(())
+    }
 }
 
 pub fn emit_parse_err<'files>(
     errs: impl IntoIterator<Item = Simple<char>>,
     file_id: usize,
     files: &SimpleFiles<&str, &str>,
-) -> Result<()> {
-    let writer = StandardStream::stderr(ColorChoice::Auto);
-    let config = codespan_reporting::term::Config::default();
-
+) -> anyhow::Result<()> {
     let src = files
         .get(file_id)
         .expect("file id should be valid")
@@ -81,6 +159,8 @@ pub fn emit_parse_err<'files>(
             }
         };
 
+        let writer = StandardStream::stderr(ColorChoice::Auto);
+        let config = codespan_reporting::term::Config::default();
         term::emit(&mut writer.lock(), &config, files, &diagnostic)?;
     }
 

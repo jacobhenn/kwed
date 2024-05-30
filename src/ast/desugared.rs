@@ -1,6 +1,6 @@
-use super::{Ident, Path};
+use super::{Ident, Path, Span};
 
-use std::{collections::HashSet, fmt::Display, rc::Rc};
+use std::{collections::HashSet, fmt::Display, ops::Range, rc::Rc};
 
 use crossterm::style::{Color, Stylize};
 
@@ -10,41 +10,46 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
-    TypeType,
+    TypeType {
+        span: Option<Span>,
+    },
 
     Var {
         id: Uuid,
         name: Ident,
+        span: Option<Span>,
     },
-    Path(Path),
+    Path {
+        path: Path,
+        span: Option<Span>,
+    },
 
     Fn {
         param: Rc<BindingParam>,
         body: Rc<Self>,
+        span: Option<Span>,
     },
     FnType {
         param: Rc<BindingParam>,
         cod: Rc<Self>,
+        span: Option<Span>,
     },
     FnApp {
         func: Rc<Self>,
         arg: Rc<Self>,
+        span: Option<Span>,
     },
-
-    Eq {
-        lhs: Rc<Self>,
-        rhs: Rc<Self>,
-    },
-    Refl(Rc<Self>),
 
     Match {
         arg: Rc<Self>,
         cod: Rc<Self>,
         arms: Vec<MatchArm>,
+        span: Option<Span>,
     },
     Rec {
         id: Uuid,
-        name: Ident,
+        var: Ident,
+        span: Option<Span>,
     },
 }
 
@@ -125,25 +130,23 @@ pub(crate) fn uuid_color(id: Uuid) -> Color {
 impl Display for Expr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Expr::TypeType => write!(f, "Type"),
-            Expr::Var { id, name } => write!(f, "{}", name.name.as_str().with(uuid_color(*id))),
-            Expr::Path(path) => write!(f, "{path}"),
-            Expr::Fn { param, body } => write!(
+            Expr::TypeType { .. } => write!(f, "Type"),
+            Expr::Var { id, name, .. } => write!(f, "{}", name.name.as_str().with(uuid_color(*id))),
+            Expr::Path { path, .. } => write!(f, "{path}"),
+            Expr::Fn { param, body, .. } => write!(
                 f,
                 "[{}: {}] {body}",
                 param.name.name.as_str().with(uuid_color(param.id)),
                 param.ty,
             ),
-            Expr::FnType { param, cod } => write!(
+            Expr::FnType { param, cod, .. } => write!(
                 f,
                 "({}: {}) → {cod}",
                 param.name.name.as_str().with(uuid_color(param.id)),
                 param.ty
             ),
-            Expr::FnApp { func, arg } => write!(f, "({func}) ({arg})"),
-            Expr::Eq { lhs, rhs } => write!(f, "({lhs}) = ({rhs})"),
-            Expr::Refl(arg) => write!(f, "refl {arg}"),
-            Expr::Match { arg, cod, arms } => write!(
+            Expr::FnApp { func, arg, .. } => write!(f, "({func}) ({arg})"),
+            Expr::Match { arg, cod, arms, .. } => write!(
                 f,
                 "match {arg} to {cod} {{ {} }}",
                 arms.iter()
@@ -151,7 +154,9 @@ impl Display for Expr {
                     .intersperse(", ".to_string())
                     .collect::<String>()
             ),
-            Expr::Rec { id, name } => write!(f, "rec {}", name.name.as_str().with(uuid_color(*id))),
+            Expr::Rec { id, var: name, .. } => {
+                write!(f, "rec {}", name.name.as_str().with(uuid_color(*id)))
+            }
         }
     }
 }
@@ -203,7 +208,7 @@ impl Expr {
     }
 
     fn args_impl<'a>(&'a self, args: &mut Vec<&'a Self>) {
-        if let Self::FnApp { func, arg } = self {
+        if let Self::FnApp { func, arg, .. } = self {
             args.push(arg);
             func.args_impl(args);
         }
@@ -217,7 +222,7 @@ impl Expr {
     }
 
     fn fn_params_impl<'a>(&'a self, params: &mut Vec<&'a BindingParam>) {
-        if let Self::Fn { param, body } = self {
+        if let Self::Fn { param, body, .. } = self {
             params.push(param);
             body.fn_params_impl(params);
         }
@@ -238,7 +243,7 @@ impl Expr {
     }
 
     fn fn_ty_params_impl<'a>(&'a self, params: &mut Vec<&'a BindingParam>) {
-        if let Self::FnType { param, cod } = self {
+        if let Self::FnType { param, cod, .. } = self {
             params.push(param);
             cod.fn_ty_params_impl(params);
         }
@@ -265,21 +270,36 @@ impl Expr {
         }
     }
 
+    pub fn span(&self) -> Option<Span> {
+        match self {
+            Expr::TypeType { span } => span.clone(),
+            Expr::Var { span, .. } => span.clone(),
+            Expr::Path { span, .. } => span.clone(),
+            Expr::Fn { span, .. } => span.clone(),
+            Expr::FnType { span, .. } => span.clone(),
+            Expr::FnApp { span, .. } => span.clone(),
+            Expr::Match { span, .. } => span.clone(),
+            Expr::Rec { span, .. } => span.clone(),
+        }
+    }
+
     fn eq_impl(this: &Self, that: &Self, ctx: &mut HashSet<[Uuid; 2]>) -> bool {
         match (this, that) {
-            (Expr::TypeType, Expr::TypeType) => true,
+            (Expr::TypeType { .. }, Expr::TypeType { .. }) => true,
             (Expr::Var { id: lid, .. }, Expr::Var { id: rid, .. }) => {
                 lid == rid || ctx.contains(&[*lid, *rid])
             }
-            (Expr::Path(l), Expr::Path(r)) => l == r,
+            (Expr::Path { path: lpath, .. }, Expr::Path { path: rpath, .. }) => lpath == rpath,
             (
                 Expr::Fn {
                     param: lparam,
                     body: lbody,
+                    ..
                 },
                 Expr::Fn {
                     param: rparam,
                     body: rbody,
+                    ..
                 },
             ) => {
                 let params_eq = Self::eq_impl(&lparam.ty, &rparam.ty, ctx);
@@ -294,10 +314,12 @@ impl Expr {
                 Expr::FnType {
                     param: lparam,
                     cod: lcod,
+                    ..
                 },
                 Expr::FnType {
                     param: rparam,
                     cod: rcod,
+                    ..
                 },
             ) => {
                 let params_eq = Self::eq_impl(&lparam.ty, &rparam.ty, ctx);
@@ -312,23 +334,14 @@ impl Expr {
                 Expr::FnApp {
                     func: lfunc,
                     arg: larg,
+                    ..
                 },
                 Expr::FnApp {
                     func: rfunc,
                     arg: rarg,
+                    ..
                 },
             ) => Self::eq_impl(lfunc, rfunc, ctx) && Self::eq_impl(larg, rarg, ctx),
-            (
-                Expr::Eq {
-                    lhs: llhs,
-                    rhs: lrhs,
-                },
-                Expr::Eq {
-                    lhs: rlhs,
-                    rhs: rrhs,
-                },
-            ) => Self::eq_impl(llhs, rlhs, ctx) && Self::eq_impl(lrhs, rrhs, ctx),
-            (Expr::Refl(larg), Expr::Refl(rarg)) => Self::eq_impl(larg, rarg, ctx),
             (_, _) => false,
         }
     }

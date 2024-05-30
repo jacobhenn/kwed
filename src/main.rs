@@ -2,6 +2,7 @@
 #![feature(exact_size_is_empty)]
 #![feature(assert_matches)]
 #![feature(let_chains)]
+#![feature(round_char_boundary)]
 
 mod ast;
 
@@ -40,7 +41,7 @@ fn main() -> Result<()> {
     let mut files: SimpleFiles<&str, &str> = SimpleFiles::new();
     let file_id = files.add(&path, &src);
 
-    let (module, errs) = ast::sugared::Module::parse_final().parse_recovery_verbose(src.as_str());
+    let (module, errs) = ast::sugared::Module::parse_final().parse_recovery(src.as_str());
 
     if !errs.is_empty() {
         debug!("recovered AST: {module:#?}");
@@ -53,7 +54,7 @@ fn main() -> Result<()> {
 
     debug!("parsed module: {module:#?}");
 
-    let mut desugared_module = module.desugared();
+    let mut desugared_module = module.desugared(file_id);
 
     debug!("desugared module: {desugared_module:#?}");
 
@@ -61,14 +62,23 @@ fn main() -> Result<()> {
 
     debug!("desugared module with variables bound: {desugared_module:#?}");
 
+    if let Err(e) = build_module(desugared_module) {
+        e.emit(&files)?;
+        return Ok(());
+    };
+
+    info!("type checking successful");
+
+    Ok(())
+}
+
+fn build_module(desugared_module: Module) -> crate::err::Result<()> {
     let mut checked_module = Module::new();
 
     for (path, item) in desugared_module.items {
         item.type_check(&path, &checked_module)?;
         item.eval_and_insert(path, &mut checked_module)?;
     }
-
-    info!("type checking successful");
 
     Ok(())
 }
