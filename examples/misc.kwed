@@ -12,7 +12,7 @@ inductive Vec(A: Type): ℕ → Type
 
 def prepend(A: Type, n: ℕ, v: Vec A n, a: A): Vec A (ℕ.suc n)
 {
-	match v to [n: ℕ, Vec A n] Vec A (ℕ.suc n)
+	match v to [n: ℕ, Vec A m] Vec A (ℕ.suc n)
 	{
 		nil => Vec.cons A ℕ.0 (Vec.nil A) a,
 		cons n' v' a' => Vec.cons A n (rec v') a',

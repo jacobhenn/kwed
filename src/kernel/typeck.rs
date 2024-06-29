@@ -243,7 +243,7 @@ impl Expr {
                     }
 
                     let arm_ctx = iter::zip(&arm.args, constructor_def_params)
-                        .fold((*ctx).clone(), |acc, ((id, _name), par)| {
+                        .fold(ctx.clone(), |acc, ((id, _name), par)| {
                             acc.with_var(*id, par.ty.clone())
                         });
 
