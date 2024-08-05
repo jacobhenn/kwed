@@ -66,19 +66,9 @@ pub struct MatchArm {
 
 #[derive(Debug, PartialEq)]
 pub enum Item {
-    Def {
-        args: Params,
-        ty: Expr,
-        val: Expr,
-    },
-    Axiom {
-        ty: Expr,
-    },
-    Inductive {
-        params: Params,
-        ty: Expr,
-        constructors: Params,
-    },
+    Def { args: Params, ty: Expr, val: Expr },
+    Axiom { ty: Expr },
+    Inductive { ty: Expr, constructors: Params },
 }
 
 #[derive(Debug, PartialEq)]
@@ -236,16 +226,9 @@ impl Item {
                 ty: ty.desugared(file_id),
             },
             Item::Inductive {
-                params: Params(params),
                 ty,
                 constructors: Params(constructors),
             } => desugared::Item::Inductive {
-                params: params
-                    .into_iter()
-                    .map(|par| par.desugared(file_id))
-                    .flatten()
-                    .map(desugared::Param::binding)
-                    .collect(),
                 ty: ty.desugared(file_id),
                 constructors: constructors
                     .into_iter()

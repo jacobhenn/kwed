@@ -112,25 +112,11 @@ impl Item {
                 val.bind_vars(&Context::Empty)?;
             }
             Item::Axiom { ty } => ty.bind_vars(&Context::Empty)?,
-            Item::Inductive {
-                params,
-                ty,
-                constructors,
-            } => {
-                let mut ctx = Context::Empty;
-                for param in params {
-                    param.ty.bind_vars(&ctx)?;
-                    ctx = Context::Var {
-                        outer: Box::new(ctx),
-                        name: param.name.clone(),
-                        id: param.id,
-                    };
-                }
-
-                ty.bind_vars(&ctx)?;
+            Item::Inductive { ty, constructors } => {
+                ty.bind_vars(&Context::Empty)?;
 
                 for constructor in constructors {
-                    constructor.ty.bind_vars(&ctx)?;
+                    constructor.ty.bind_vars(&Context::Empty)?;
                 }
             }
         }

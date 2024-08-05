@@ -99,19 +99,10 @@ impl Display for MatchArm {
 
 #[derive(Debug, PartialEq)]
 pub enum Item {
-    Def {
-        ty: Expr,
-        val: Expr,
-    },
-    Axiom {
-        ty: Expr,
-    },
+    Def { ty: Expr, val: Expr },
+    Axiom { ty: Expr },
     // TODO: figure out if `params` is even necessary
-    Inductive {
-        params: Vec<BindingParam>,
-        ty: Expr,
-        constructors: Vec<Param>,
-    },
+    Inductive { ty: Expr, constructors: Vec<Param> },
 }
 
 #[derive(Debug, PartialEq)]
@@ -172,22 +163,9 @@ impl Display for Item {
         match self {
             Item::Def { ty, val } => write!(f, "def _: {ty} {{ {val} }}"),
             Item::Axiom { ty } => write!(f, "axiom _: {ty}"),
-            Item::Inductive {
-                params,
-                ty,
-                constructors,
-            } => write!(
+            Item::Inductive { ty, constructors } => write!(
                 f,
-                "inductive _({}): {ty} {{ {} }}",
-                params
-                    .into_iter()
-                    .map(|par| format!(
-                        "{}: {}",
-                        par.name.name.as_str().with(uuid_color(par.id)),
-                        ty
-                    ))
-                    .intersperse(", ".to_string())
-                    .collect::<String>(),
+                "inductive _: {ty} {{ {} }}",
                 constructors
                     .into_iter()
                     .map(|c| format!("{}: {}", c.name, c.ty))
@@ -266,6 +244,13 @@ impl Expr {
     pub fn is_var_with_id(&self, desired_id: Uuid) -> bool {
         match self {
             Self::Var { id, .. } => *id == desired_id,
+            _ => false,
+        }
+    }
+
+    pub fn is_path_to(&self, desired_path: &Path) -> bool {
+        match self {
+            Self::Path { path, .. } => path == desired_path,
             _ => false,
         }
     }

@@ -18,6 +18,7 @@
       with pkgs;
       {
         devShells.default = mkShell {
+          name = "rust-dev";
           buildInputs = [
             pkg-config
             (

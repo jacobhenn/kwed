@@ -51,23 +51,13 @@ impl Expr {
             Path { path, span } => {
                 if let Some(item) = md.items.get(path) {
                     item.ty()
-                } else if let Some(Item::Inductive {
-                    params,
-                    constructors,
-                    ..
-                }) = md.items.get(&path.clone().parent())
+                } else if let Some(Item::Inductive { constructors, .. }) =
+                    md.items.get(&path.clone().parent())
                     && let Some(param) = constructors
                         .iter()
                         .find(|c| &c.name == path.components.last().expect("paths are non-empty"))
                 {
-                    params
-                        .iter()
-                        .cloned()
-                        .rfold(param.ty.clone(), |acc, par| FnType {
-                            param: Rc::new(par),
-                            cod: Rc::new(acc),
-                            span: None,
-                        })
+                    param.ty.clone()
                 } else if let Some((ind_path, ty)) = ctx.this_inductive()
                     && path == ind_path
                 {
@@ -129,8 +119,9 @@ impl Expr {
                 } = arg_ty.head()
                 else {
                     bail!(
-                        arg_ty.span(),
-                        "cannot match on non-inductive type `{arg_ty}`"
+                        arg.span(),
+                        "cannot match on non-inductive type `{arg_ty}`";
+                        arg_ty.span(), "this type is not inductive"
                     )
                 };
 
@@ -142,14 +133,14 @@ impl Expr {
                 };
 
                 let Item::Inductive {
-                    params: ind_def_params,
                     ty: ind_def_ty,
                     constructors: ind_def_constructors,
                 } = arg_ty_head_item
                 else {
                     bail!(
-                        arg_ty_head_span.clone(),
-                        "cannot match on non-inductive type `{arg_ty_head}`"
+                        arg.span(),
+                        "cannot match on non-inductive type `{arg_ty_head}`";
+                        arg_ty_head_span.clone(), "this type is not inductive"
                     )
                 };
 
@@ -181,7 +172,7 @@ impl Expr {
                     );
                 }
 
-                if !Expr::eq_up_to_vars(final_param.ty.head(), arg_ty.head()) {
+                if !final_param.ty.head().is_path_to(arg_ty_head) {
                     bail!(
                         final_param.ty.span(),
                         "match codomain must include parameter of type `{arg_ty_head} ..`"
@@ -189,25 +180,11 @@ impl Expr {
                 }
 
                 let final_param_args = final_param.ty.args();
-                let (param_args, index_args) = final_param_args.split_at(ind_def_params.len());
 
-                debug!("param_args: {param_args:?}, index_args: {index_args:?}");
+                debug!("index_params: {index_params:?}");
 
-                if !iter::zip(
-                    param_args,
-                    arg_ty.args().into_iter().take(ind_def_params.len()),
-                )
-                .all(|(l, r)| Expr::eq_up_to_vars(l, r))
-                {
-                    bail!(
-                        cod.span(),
-                        "parameters of `{arg_ty_head}` differ in match argument and codomain"
-                    );
-                }
-
-                debug!("index_params: {index_params:?}, index_args: {index_args:?}");
-
-                if !iter::zip(index_params, index_args).all(|(par, arg)| arg.is_var_with_id(par.id))
+                if !iter::zip(index_params, final_param_args)
+                    .all(|(par, arg)| arg.is_var_with_id(par.id))
                 {
                     bail!(
                         cod.span(),
@@ -242,10 +219,15 @@ impl Expr {
                         );
                     }
 
-                    let arm_ctx = iter::zip(&arm.args, constructor_def_params)
-                        .fold(ctx.clone(), |acc, ((id, _name), par)| {
-                            acc.with_var(*id, par.ty.clone())
-                        });
+                    let mut arm_ctx = ctx.clone();
+
+                    for ((id, _name), arm_param) in iter::zip(&arm.args, constructor_def_params) {
+                        arm_ctx = arm_ctx.with_var(*id, arm_param.ty.clone());
+
+                        if arm_param.ty.head().is_path_to(arg_ty_head) {
+                            todo!("bind recurisve vars")
+                        }
+                    }
 
                     let body_ty = arm.body.ty(md, &arm_ctx)?;
                 }
@@ -299,64 +281,10 @@ fn expect_valid_inductive_def_ty(ty: &Expr) -> Result<()> {
     }
 }
 
-fn is_expected_app_root(ty: &Expr, item_path: &Path, params: &[BindingParam]) -> bool {
-    match params {
-        [params_head @ .., last_param] => match ty {
-            Expr::FnApp { func, arg, .. } => {
-                if let Expr::Var { id, .. } = **arg
-                    && id == last_param.id
-                {
-                    is_expected_app_root(func, item_path, &params_head)
-                } else {
-                    false
-                }
-            }
-            _ => false,
-        },
-        [] => {
-            if let Expr::Path { path, .. } = ty
-                && path == item_path
-            {
-                true
-            } else {
-                false
-            }
-        }
-    }
-}
-
-fn expect_valid_constructor_ty(ty: &Expr, item_path: &Path, params: &[BindingParam]) -> Result<()> {
-    match ty {
-        Expr::FnType { cod, .. } => expect_valid_constructor_ty(cod, item_path, params),
-        Expr::FnApp { func, .. } => {
-            if is_expected_app_root(func, item_path, params) {
-                Ok(())
-            } else {
-                expect_valid_constructor_ty(func, item_path, params)
-            }
-        }
-        Expr::Path { path, .. } if path == item_path => Ok(()),
-        other => bail!(
-            other.span(),
-            "`{other}` is not valid here in the type of a constructor"
-        ),
-    }
-}
-
 impl Item {
     pub fn ty(&self) -> Expr {
         match self {
-            Item::Def { ty, .. } | Item::Axiom { ty } => ty.clone(),
-            Item::Inductive { params, ty, .. } => {
-                params
-                    .iter()
-                    .cloned()
-                    .rfold(ty.clone(), |acc, param| Expr::FnType {
-                        param: Rc::new(param),
-                        cod: Rc::new(acc),
-                        span: None,
-                    })
-            }
+            Item::Def { ty, .. } | Item::Axiom { ty } | Item::Inductive { ty, .. } => ty.clone(),
         }
     }
 
@@ -365,23 +293,11 @@ impl Item {
         match self {
             Item::Def { ty, val } => val.expect_ty(ty, md, &Context::Empty)?,
             Item::Axiom { .. } => (),
-            Item::Inductive {
-                params,
-                ty,
-                constructors,
-            } => {
-                let mut ctx = Context::Empty;
-                for param in params {
-                    param
-                        .ty
-                        .expect_ty(&Expr::TypeType { span: None }, md, &ctx)?;
-                    ctx = ctx.with_var(param.id, param.ty.clone());
-                }
-
+            Item::Inductive { ty, constructors } => {
                 expect_valid_inductive_def_ty(ty)?;
 
-                ctx = Context::ThisInductive {
-                    outer: Rc::new(ctx),
+                let ctx = Context::ThisInductive {
+                    outer: Rc::new(Context::Empty),
                     path: path.clone(),
                     ty: self.ty(),
                 };
@@ -390,7 +306,14 @@ impl Item {
                     constructor
                         .ty
                         .expect_ty(&Expr::TypeType { span: None }, md, &ctx)?;
-                    expect_valid_constructor_ty(&constructor.ty, path, params)?;
+
+                    if !constructor.ty.root_cod().head().is_path_to(path) {
+                        bail!(
+                            constructor.ty.root_cod().span(),
+                            "Constructors must return the type they are constructing"
+                        );
+                    }
+
                     // TODO: positivity checking
                 }
             }

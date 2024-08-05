@@ -12,6 +12,7 @@ use codespan_reporting::{
         termcolor::{ColorChoice, StandardStream},
     },
 };
+use tracing::debug;
 
 fn convert_span(src: &str, mut span: Range<usize>) -> Range<usize> {
     let start = src
@@ -21,9 +22,9 @@ fn convert_span(src: &str, mut span: Range<usize>) -> Range<usize> {
         .unwrap()
         .0;
 
-    while src.chars().nth(span.end - 1).unwrap().is_whitespace() {
-        span.end -= 1;
-    }
+    // while src.chars().nth(span.end - 1).unwrap().is_whitespace() {
+    //     span.end -= 1;
+    // }
 
     let end = src.char_indices().nth(span.end).unwrap().0;
 
@@ -78,6 +79,7 @@ impl Error {
         let mut labels = Vec::new();
 
         if let Some(span) = &self.span {
+            debug!("primary span: {span:?}");
             labels.push(Label::primary(span.file_id, span.range.clone()));
         }
 

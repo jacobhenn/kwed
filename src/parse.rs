@@ -114,12 +114,6 @@ impl Item {
     pub fn parse_inductive() -> impl Parser<char, (Path, Self), Error = Simple<char>> {
         text::keyword("inductive")
             .ignore_then(Path::parse().padded_by(pad()))
-            .then(
-                Params::parse(Expr::parse())
-                    .padded_by(pad())
-                    .delimited_by(just('('), just(')'))
-                    .or_not(),
-            )
             .then_ignore(just(':').padded_by(pad()))
             .then(Expr::parse().padded_by(pad()))
             .then(
@@ -127,16 +121,7 @@ impl Item {
                     .padded_by(pad())
                     .delimited_by(just('{'), just('}')),
             )
-            .map(|(((name, params), ty), constructors)| {
-                (
-                    name,
-                    Self::Inductive {
-                        params: params.unwrap_or_default(),
-                        ty,
-                        constructors,
-                    },
-                )
-            })
+            .map(|((name, ty), constructors)| (name, Self::Inductive { ty, constructors }))
             .labelled("inductive definition")
             .debug("inductive definition")
     }

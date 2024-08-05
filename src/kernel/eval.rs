@@ -121,22 +121,11 @@ impl Item {
                 val.eval(md, &Context::Empty)?;
             }
             Item::Axiom { ty } => ty.eval(md, &Context::Empty)?,
-            Item::Inductive {
-                params,
-                ty,
-                constructors,
-            } => {
-                let mut ctx = Context::Empty;
-
-                for param in params {
-                    param.ty.eval(md, &ctx)?;
-                    ctx = ctx.with_var(param.id, param.ty.clone());
-                }
-
-                ty.eval(md, &ctx)?;
+            Item::Inductive { ty, constructors } => {
+                ty.eval(md, &Context::Empty)?;
 
                 for constructor in constructors {
-                    constructor.ty.eval(md, &ctx)?;
+                    constructor.ty.eval(md, &Context::Empty)?;
                 }
             }
         }
