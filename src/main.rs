@@ -3,6 +3,7 @@
 #![feature(assert_matches)]
 #![feature(let_chains)]
 #![feature(round_char_boundary)]
+#![feature(iter_chain)]
 
 mod ast;
 
@@ -41,7 +42,7 @@ fn main() -> Result<()> {
     let mut files: SimpleFiles<&str, &str> = SimpleFiles::new();
     let file_id = files.add(&path, &src);
 
-    let (module, errs) = ast::sugared::Module::parse_final().parse_recovery(src.as_str());
+    let (module, errs) = ast::sugared::Module::parse_final(file_id).parse_recovery(src.as_str());
 
     if !errs.is_empty() {
         debug!("recovered AST: {module:#?}");
@@ -54,7 +55,7 @@ fn main() -> Result<()> {
 
     debug!("parsed module: {module:#?}");
 
-    let mut desugared_module = module.desugared(file_id);
+    let mut desugared_module = module.desugared();
 
     debug!("desugared module: {desugared_module:#?}");
 

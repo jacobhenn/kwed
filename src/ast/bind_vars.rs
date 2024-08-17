@@ -7,6 +7,7 @@ use std::{mem, rc::Rc};
 
 use anyhow::Result;
 
+use tracing::trace;
 use uuid::Uuid;
 
 // TODO: change to Rc instead of Box would make it a little nicer
@@ -44,8 +45,8 @@ impl Expr {
                     if let Some(id) = ctx.id(name) {
                         *self = Self::Var {
                             id,
-                            name: mem::take(name),
-                            span: mem::take(span),
+                            name: name.clone(),
+                            span: span.clone(),
                         };
                     }
                 }
@@ -76,28 +77,6 @@ impl Expr {
                 Rc::make_mut(func).bind_vars(ctx)?;
                 Rc::make_mut(arg).bind_vars(ctx)?;
             }
-            Expr::Match { arg, cod, arms, .. } => {
-                Rc::make_mut(arg).bind_vars(ctx)?;
-                Rc::make_mut(cod).bind_vars(ctx)?;
-                for arm in arms {
-                    let ctx = arm
-                        .args
-                        .iter()
-                        .cloned()
-                        .fold(ctx.clone(), |acc, (id, name)| Context::Var {
-                            outer: Box::new(acc),
-                            name,
-                            id,
-                        });
-
-                    arm.body.bind_vars(&ctx)?;
-                }
-            }
-            Expr::Rec { id, var: name, .. } => {
-                if let Some(bound_id) = ctx.id(name) {
-                    *id = bound_id;
-                }
-            }
         }
 
         Ok(())
@@ -112,11 +91,25 @@ impl Item {
                 val.bind_vars(&Context::Empty)?;
             }
             Item::Axiom { ty } => ty.bind_vars(&Context::Empty)?,
-            Item::Inductive { ty, constructors } => {
-                ty.bind_vars(&Context::Empty)?;
+            Item::Inductive {
+                params,
+                ty,
+                constructors,
+            } => {
+                let mut ctx = Context::Empty;
+                for param in params {
+                    param.ty.bind_vars(&ctx)?;
+                    ctx = Context::Var {
+                        outer: Box::new(ctx),
+                        name: param.name.clone(),
+                        id: param.id,
+                    };
+                }
 
-                for constructor in constructors {
-                    constructor.ty.bind_vars(&Context::Empty)?;
+                ty.bind_vars(&ctx)?;
+
+                for (_name, ty) in constructors {
+                    ty.bind_vars(&ctx)?;
                 }
             }
         }

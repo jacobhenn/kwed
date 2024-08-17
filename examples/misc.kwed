@@ -1,20 +1,53 @@
+inductive =(A: Type, x: A): A → Type
+{
+	refl: = A x x,
+}
+
 inductive ℕ: Type
 {
 	0: ℕ,
 	suc: ℕ → ℕ,
 }
 
-inductive Vec: (Type, ℕ) → Type
+def ℕ.1: ℕ { ℕ.suc ℕ.0 }
+def ℕ.2: ℕ { ℕ.suc ℕ.1 }
+def ℕ.3: ℕ { ℕ.suc ℕ.2 }
+def ℕ.4: ℕ { ℕ.suc ℕ.3 }
+def ℕ.5: ℕ { ℕ.suc ℕ.4 }
+def ℕ.6: ℕ { ℕ.suc ℕ.5 }
+
+inductive Vec(A: Type): ℕ → Type
 {
-	nil: (A: Type) → Vec A ℕ.0,
-	cons: (A: Type, n: ℕ, Vec A n, A) → Vec A (ℕ.suc n),
+	nil: Vec A ℕ.0,
+	cons: (n: ℕ, Vec A n, A) → Vec A (ℕ.suc n),
 }
 
-def prepend(A: Type, n: ℕ, v: Vec A n, a: A): Vec A (ℕ.suc n)
+def Vec.prepend(A: Type, n: ℕ, v: Vec A n, a: A): Vec A (ℕ.suc n)
 {
-	match v to [A: Type, n: ℕ, Vec A n] Vec A (ℕ.suc n)
-	{
-		nil _ => Vec.cons A ℕ.0 (Vec.nil A) a,
-		cons _ n' v' a' => Vec.cons A n (rec v') a',
-	}
+	Vec.elim A ([n: ℕ, v: Vec A n] Vec A (ℕ.suc n))
+		(Vec.cons A ℕ.0 (Vec.nil A) a) // nil case
+		([n': ℕ, v': Vec A n', a': A, v'_rec: Vec A (ℕ.suc n')]
+			Vec.cons A (ℕ.suc n') v'_rec a'
+		) // cons case
+		n v
+}
+
+def just_1: Vec ℕ ℕ.1
+{
+	Vec.cons ℕ ℕ.0 (Vec.nil ℕ) ℕ.1
+}
+
+def just_2: Vec ℕ ℕ.1
+{
+	Vec.cons ℕ ℕ.0 (Vec.nil ℕ) ℕ.2
+}
+
+def just_1_2: Vec ℕ ℕ.2
+{
+	Vec.cons ℕ ℕ.1 just_1 ℕ.2
+}
+
+def just_1_2=prepend_1_just_2: = (Vec ℕ ℕ.2) just_1_2 (Vec.prepend ℕ ℕ.1 just_2 ℕ.1)
+{
+	=.refl (Vec ℕ ℕ.2) just_1_2
 }

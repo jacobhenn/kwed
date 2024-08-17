@@ -1,0 +1,7 @@
+inductive ℕ: Type
+{
+	0: ℕ,
+	suc: ℕ → ℕ,
+}
+
+def x(A: Type): ℕ { ℕ.suc A }

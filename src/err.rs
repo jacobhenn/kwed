@@ -22,15 +22,16 @@ fn convert_span(src: &str, mut span: Range<usize>) -> Range<usize> {
         .unwrap()
         .0;
 
-    // while src.chars().nth(span.end - 1).unwrap().is_whitespace() {
-    //     span.end -= 1;
-    // }
+    while src.chars().nth(span.end - 1).unwrap().is_whitespace() {
+        span.end -= 1;
+    }
 
     let end = src.char_indices().nth(span.end).unwrap().0;
 
     start..end
 }
 
+#[derive(Debug)]
 pub struct Error {
     pub span: Option<Span>,
     pub message: String,

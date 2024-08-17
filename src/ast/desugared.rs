@@ -1,6 +1,6 @@
 use super::{Ident, Path, Span};
 
-use std::{collections::HashSet, fmt::Display, ops::Range, rc::Rc};
+use std::{collections::HashSet, fmt::Display, rc::Rc};
 
 use crossterm::style::{Color, Stylize};
 
@@ -14,6 +14,8 @@ pub enum Expr {
         span: Option<Span>,
     },
 
+    // TODO: `Var` and `Path` may not need to store a span, since they are already stored in their
+    // contents.
     Var {
         id: Uuid,
         name: Ident,
@@ -39,18 +41,6 @@ pub enum Expr {
         arg: Rc<Self>,
         span: Option<Span>,
     },
-
-    Match {
-        arg: Rc<Self>,
-        cod: Rc<Self>,
-        arms: Vec<MatchArm>,
-        span: Option<Span>,
-    },
-    Rec {
-        id: Uuid,
-        var: Ident,
-        span: Option<Span>,
-    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -66,6 +56,30 @@ pub struct BindingParam {
     pub ty: Expr,
 }
 
+impl BindingParam {
+    pub fn new(name: Ident, ty: Expr) -> Self {
+        Self {
+            name,
+            id: Uuid::new_v4(),
+            ty,
+        }
+    }
+
+    pub fn blank(ty: Expr) -> Self {
+        let id = Uuid::new_v4();
+
+        Self {
+            name: Ident::from_id(id),
+            id,
+            ty,
+        }
+    }
+
+    pub fn to_var(self) -> Expr {
+        Expr::var(self.id, self.name.clone(), None)
+    }
+}
+
 impl Param {
     pub fn binding(self) -> BindingParam {
         BindingParam {
@@ -76,33 +90,21 @@ impl Param {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
-pub struct MatchArm {
-    pub constructor: Ident,
-    pub args: Vec<(Uuid, Ident)>,
-    pub body: Expr,
-}
-
-impl Display for MatchArm {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} ", self.constructor)?;
-
-        for (id, name) in &self.args {
-            write!(f, "{} ", name.name.as_str().with(uuid_color(*id)))?;
-        }
-
-        write!(f, "=> {}", self.body)?;
-
-        Ok(())
-    }
-}
-
 #[derive(Debug, PartialEq)]
 pub enum Item {
-    Def { ty: Expr, val: Expr },
-    Axiom { ty: Expr },
+    Def {
+        ty: Expr,
+        val: Expr,
+    },
+    Axiom {
+        ty: Expr,
+    },
     // TODO: figure out if `params` is even necessary
-    Inductive { ty: Expr, constructors: Vec<Param> },
+    Inductive {
+        params: Vec<BindingParam>,
+        ty: Expr,
+        constructors: Vec<(Ident, Expr)>,
+    },
 }
 
 #[derive(Debug, PartialEq)]
@@ -122,7 +124,9 @@ impl Display for Expr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Expr::TypeType { .. } => write!(f, "Type"),
-            Expr::Var { id, name, .. } => write!(f, "{}", name.name.as_str().with(uuid_color(*id))),
+            Expr::Var { id, name, .. } => {
+                write!(f, "{}", name.name.as_str().with(uuid_color(*id)),)
+            }
             Expr::Path { path, .. } => write!(f, "{path}"),
             Expr::Fn { param, body, .. } => write!(
                 f,
@@ -136,17 +140,15 @@ impl Display for Expr {
                 param.name.name.as_str().with(uuid_color(param.id)),
                 param.ty
             ),
-            Expr::FnApp { func, arg, .. } => write!(f, "({func}) ({arg})"),
-            Expr::Match { arg, cod, arms, .. } => write!(
-                f,
-                "match {arg} to {cod} {{ {} }}",
-                arms.iter()
-                    .map(MatchArm::to_string)
-                    .intersperse(", ".to_string())
-                    .collect::<String>()
-            ),
-            Expr::Rec { id, var: name, .. } => {
-                write!(f, "rec {}", name.name.as_str().with(uuid_color(*id)))
+            Expr::FnApp { .. } => {
+                self.head().fmt_in_parens(f)?;
+
+                for arg in self.args() {
+                    write!(f, " ")?;
+                    arg.fmt_in_parens(f)?;
+                }
+
+                Ok(())
             }
         }
     }
@@ -163,12 +165,21 @@ impl Display for Item {
         match self {
             Item::Def { ty, val } => write!(f, "def _: {ty} {{ {val} }}"),
             Item::Axiom { ty } => write!(f, "axiom _: {ty}"),
-            Item::Inductive { ty, constructors } => write!(
+            Item::Inductive {
+                params,
+                ty,
+                constructors,
+            } => write!(
                 f,
-                "inductive _: {ty} {{ {} }}",
-                constructors
+                "inductive _({}): {ty} {{ {} }}",
+                params
                     .into_iter()
                     .map(|c| format!("{}: {}", c.name, c.ty))
+                    .intersperse(", ".to_string())
+                    .collect::<String>(),
+                constructors
+                    .into_iter()
+                    .map(|(name, ty)| format!("{name}: {ty}"))
                     .intersperse(", ".to_string())
                     .collect::<String>(),
             ),
@@ -177,6 +188,65 @@ impl Display for Item {
 }
 
 impl Expr {
+    pub fn type_type(span: Option<Span>) -> Self {
+        Self::TypeType { span }
+    }
+
+    pub fn var(id: Uuid, name: Ident, span: Option<Span>) -> Self {
+        Self::Var { id, name, span }
+    }
+
+    pub fn path(path: Path, span: Option<Span>) -> Self {
+        Self::Path { path, span }
+    }
+
+    pub fn func(param: BindingParam, body: Expr, span: Option<Span>) -> Self {
+        Self::Fn {
+            param: Rc::new(param),
+            body: Rc::new(body),
+            span,
+        }
+    }
+
+    pub fn fn_type(param: BindingParam, cod: Expr, span: Option<Span>) -> Self {
+        Self::FnType {
+            param: Rc::new(param),
+            cod: Rc::new(cod),
+            span,
+        }
+    }
+
+    pub fn fn_app(func: Expr, arg: Expr, span: Option<Span>) -> Self {
+        Self::FnApp {
+            func: Rc::new(func),
+            arg: Rc::new(arg),
+            span,
+        }
+    }
+
+    pub fn is_atomic(&self) -> bool {
+        match self {
+            Self::TypeType { .. } | Self::Var { .. } | Self::Path { .. } => true,
+            Self::Fn { .. } | Self::FnType { .. } | Self::FnApp { .. } => false,
+        }
+    }
+
+    fn fmt_in_parens(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.is_atomic() {
+            write!(f, "{self}")
+        } else {
+            write!(f, "({self})")
+        }
+    }
+
+    // TODO: rewrite all of these to return iterators instead of vecs
+
+    /// Returns the head of a function application.
+    /// ```
+    /// f x y
+    /// ^
+    /// head
+    /// ```
     pub fn head(&self) -> &Self {
         if let Self::FnApp { func, .. } = self {
             func.head()
@@ -192,6 +262,12 @@ impl Expr {
         }
     }
 
+    /// Returns the arguments of a function application.
+    /// ```
+    /// f x y
+    ///   ^^^
+    ///   args
+    /// ```
     pub fn args(&self) -> Vec<&Self> {
         let mut res = Vec::new();
         self.args_impl(&mut res);
@@ -206,12 +282,24 @@ impl Expr {
         }
     }
 
+    /// Returns the parameters of a function
+    /// ```
+    /// [x: A] [y: B] z
+    /// ^^^^^^^^^^^^^
+    /// parameters
+    /// ```
     pub fn fn_params(&self) -> Vec<&BindingParam> {
         let mut res = Vec::new();
         self.fn_params_impl(&mut res);
         res
     }
 
+    /// Returns the body of a (possibly nested) function
+    /// ```
+    /// [x: A] [y: B] z
+    ///               ^
+    ///               body
+    /// ```
     pub fn root_body(&self) -> &Self {
         if let Self::Fn { body, .. } = self {
             body.root_body()
@@ -227,12 +315,24 @@ impl Expr {
         }
     }
 
+    /// Returns the parameters of a function type
+    /// ```
+    /// (x: A) → (y: B) → C
+    /// ^^^^^^^^^^^^^^^
+    /// parameters
+    /// ```
     pub fn fn_ty_params(&self) -> Vec<&BindingParam> {
         let mut res = Vec::new();
         self.fn_ty_params_impl(&mut res);
         res
     }
 
+    /// Returns the codomain of a (possibly nested) function type
+    /// ```
+    /// (x: A) → (y: B) → C
+    ///                   ^
+    ///                   codomain
+    /// ```
     pub fn root_cod(&self) -> &Self {
         if let Self::FnType { cod, .. } = self {
             cod.root_cod()
@@ -263,8 +363,6 @@ impl Expr {
             Expr::Fn { span, .. } => span.clone(),
             Expr::FnType { span, .. } => span.clone(),
             Expr::FnApp { span, .. } => span.clone(),
-            Expr::Match { span, .. } => span.clone(),
-            Expr::Rec { span, .. } => span.clone(),
         }
     }
 
