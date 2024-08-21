@@ -1,9 +1,9 @@
-inductive =(A: Type, x: A): A → Type
+inductive =(A: Type 0, x: A): A → Type 0
 {
 	refl: = A x x,
 }
 
-inductive ℕ: Type
+inductive ℕ: Type 0
 {
 	0: ℕ,
 	suc: ℕ → ℕ,
@@ -16,13 +16,13 @@ def ℕ.4: ℕ { ℕ.suc ℕ.3 }
 def ℕ.5: ℕ { ℕ.suc ℕ.4 }
 def ℕ.6: ℕ { ℕ.suc ℕ.5 }
 
-inductive Vec(A: Type): ℕ → Type
+inductive Vec(A: Type 0): ℕ → Type 0
 {
 	nil: Vec A ℕ.0,
 	cons: (n: ℕ, Vec A n, A) → Vec A (ℕ.suc n),
 }
 
-def Vec.prepend(A: Type, n: ℕ, v: Vec A n, a: A): Vec A (ℕ.suc n)
+def Vec.prepend(A: Type 0, n: ℕ, v: Vec A n, a: A): Vec A (ℕ.suc n)
 {
 	Vec.elim A ([n: ℕ, v: Vec A n] Vec A (ℕ.suc n))
 		(Vec.cons A ℕ.0 (Vec.nil A) a) // nil case

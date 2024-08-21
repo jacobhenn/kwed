@@ -121,3 +121,19 @@ impl Display for Path {
         )
     }
 }
+
+#[derive(Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(default)]
+pub struct Directives {
+    pub type_in_type: bool,
+    pub max_recursion_depth: Option<usize>,
+}
+
+impl Default for Directives {
+    fn default() -> Self {
+        Self {
+            type_in_type: false,
+            max_recursion_depth: Some(512),
+        }
+    }
+}

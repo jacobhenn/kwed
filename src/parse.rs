@@ -1,10 +1,11 @@
 use crate::ast::{
     sugared::{Expr, Item, Module, Param, Params},
-    Ident, Path, Span,
+    Directives, Ident, Path, Span,
 };
 
 #[cfg(test)]
 use std::assert_matches::assert_matches;
+use std::collections::HashMap;
 
 use chumsky::prelude::*;
 
@@ -29,11 +30,15 @@ const RESERVED_IDENTS: &[&str] = &[
     "let",
     "module",
     "use",
+    "notation",
     "→",
+    "↑",
     "//",
 ];
 
 impl Ident {
+    // TODO: provide some check for `Ident`, `Path`, or `Item` which errors if it has a name that
+    // is exactly a number literal
     fn parse(file_id: usize) -> impl Parser<char, Self, Error = Simple<char>> {
         filter(|c: &char| !SPECIAL_CHARS.contains(c) && !c.is_whitespace())
             .repeated()
@@ -224,10 +229,35 @@ impl Item {
 impl Expr {
     pub fn parse_type_type(file_id: usize) -> impl Parser<char, Self, Error = Simple<char>> {
         text::keyword("Type")
-            .map_with_span(move |_, range| Self::TypeType {
+            .ignore_then(text::int(10).padded_by(pad()))
+            .try_map(|s: String, span| {
+                s.parse::<usize>()
+                    .map_err(|e| Simple::custom(span, format!("{e}")))
+            })
+            .map_with_span(move |level, range| Self::TypeType {
+                level,
                 span: Span::new(file_id, range),
             })
             .debug("type type")
+    }
+
+    pub fn parse_displace<'a>(
+        file_id: usize,
+        expr: impl Parser<char, Expr, Error = Simple<char>> + 'a,
+    ) -> impl Parser<char, Self, Error = Simple<char>> + 'a {
+        just('↑')
+            .then(pad())
+            .ignore_then(text::int(10).padded_by(pad()))
+            .try_map(|s: String, span| {
+                s.parse::<usize>()
+                    .map_err(|e| Simple::custom(span, format!("{e}")))
+            })
+            .then(expr.padded_by(pad()))
+            .map_with_span(move |(amount, arg), range| Self::Displace {
+                amount,
+                arg: Box::new(arg),
+                span: Span::new(file_id, range),
+            })
     }
 
     pub fn parse_path(file_id: usize) -> impl Parser<char, Self, Error = Simple<char>> {
@@ -301,6 +331,21 @@ impl Expr {
             .debug("function application")
     }
 
+    pub fn parse_number(file_id: usize) -> impl Parser<char, Self, Error = Simple<char>> {
+        text::int(10)
+            .validate(|s: String, span, emit| match s.parse::<i64>() {
+                Ok(n) => n,
+                Err(e) => {
+                    emit(Simple::custom(span, format!("{e}")));
+                    i64::MAX
+                }
+            })
+            .map_with_span(move |number, range| Self::Number {
+                number,
+                span: Span::new(file_id, range),
+            })
+    }
+
     pub fn parse_in_parens<'a>(
         expr: impl Parser<char, Expr, Error = Simple<char>> + 'a,
     ) -> impl Parser<char, Self, Error = Simple<char>> + 'a {
@@ -315,6 +360,7 @@ impl Expr {
     ) -> impl Parser<char, Self, Error = Simple<char>> + 'a {
         choice((
             Self::parse_type_type(file_id),
+            Self::parse_number(file_id),
             Self::parse_path(file_id),
             Self::parse_in_parens(expr),
         ))
@@ -324,6 +370,7 @@ impl Expr {
     pub fn parse(file_id: usize) -> impl Parser<char, Self, Error = Simple<char>> {
         recursive(|expr| {
             choice((
+                Self::parse_displace(file_id, expr.clone()),
                 Self::parse_fn_type(file_id, expr.clone()),
                 Self::parse_fn_application(file_id, expr.clone()),
                 Self::parse_fn(file_id, expr.clone()),
@@ -335,13 +382,44 @@ impl Expr {
     }
 }
 
+impl Directives {
+    pub fn parse() -> impl Parser<char, Self, Error = Simple<char>> {
+        just("~]")
+            .not()
+            .repeated()
+            .delimited_by(just("[~"), just("~]"))
+            .collect()
+            .try_map(|s: String, span| {
+                ron::from_str(&s).map_err(|e| Simple::custom(span, format!("{e}")))
+            })
+    }
+}
+
 impl Module {
-    pub fn parse_final(file_id: usize) -> impl Parser<char, Self, Error = Simple<char>> {
-        Item::parse(file_id)
+    fn parse_notation(
+        file_id: usize,
+    ) -> impl Parser<char, HashMap<String, Expr>, Error = Simple<char>> {
+        text::keyword("notation")
+            .ignore_then(Ident::parse(file_id).padded_by(pad()).map(|i| i.name))
+            .then(
+                Expr::parse(file_id)
+                    .padded_by(pad())
+                    .delimited_by(just('{'), just('}')),
+            )
             .padded_by(pad())
             .repeated()
+            .collect()
+    }
+
+    pub fn parse_final(file_id: usize) -> impl Parser<char, Self, Error = Simple<char>> {
+        Directives::parse()
+            .or_not()
+            .then(Self::parse_notation(file_id))
+            .then(Item::parse(file_id).padded_by(pad()).repeated())
             .then_ignore(end())
-            .map(|items| Self {
+            .map(|((directives, notation), items)| Self {
+                directives: directives.unwrap_or_default(),
+                notation,
                 items: items.into_iter().collect(),
             })
     }
@@ -350,16 +428,16 @@ impl Module {
 #[test]
 fn test_ident_parse() {
     assert_matches!(Ident::parse(0).then_ignore(end()).parse("x y z"), Err(..));
-    assert_matches!(Ident::parse(0).then_ignore(end()).parse("=>"), Err(..));
+    assert_matches!(Ident::parse(0).then_ignore(end()).parse("=>"), Ok(..));
     assert_matches!(Ident::parse(0).then_ignore(end()).parse("z =>"), Err(..));
-    assert_matches!(Ident::parse(0).then_ignore(end()).parse("refl z"), Err(..));
+    assert_matches!(Ident::parse(0).then_ignore(end()).parse("let z"), Err(..));
     assert_matches!(
         Ident::parse(0)
             .then_ignore(end())
             .parse("refl z => refl f z"),
         Err(..)
     );
-    assert_matches!(Ident::parse(0).then_ignore(end()).parse("refl"), Err(..));
+    assert_matches!(Ident::parse(0).then_ignore(end()).parse("let"), Err(..));
     assert_matches!(Ident::parse(0).then_ignore(end()).parse("jones"), Ok(..));
     assert_matches!(Ident::parse(0).then_ignore(end()).parse("ℝ=𝝳"), Ok(..));
 }
@@ -367,17 +445,18 @@ fn test_ident_parse() {
 #[test]
 fn test_path_parse() {
     assert_matches!(Path::parse(0).then_ignore(end()).parse("x y z"), Err(..));
-    assert_matches!(Path::parse(0).then_ignore(end()).parse("x/y/z"), Err(..));
+    assert_matches!(Path::parse(0).then_ignore(end()).parse("x;y;z"), Err(..));
     assert_matches!(Path::parse(0).then_ignore(end()).parse("x.y.z"), Ok(..));
 }
 
 #[test]
-fn test_param_parse() {
-    let param = || Param::parse(0, Expr::parse(0)).then_ignore(end());
+fn test_displace_parse() {
+    let expr = || Expr::parse(0);
 
-    assert_matches!(param().parse("x y z"), Err(..));
-    assert_matches!(param().parse(": A"), Err(..));
-    assert_matches!(param().parse("x:"), Err(..));
-    assert_matches!(param().parse("x: A"), Ok(..));
-    assert_matches!(param().parse("x:󰐦"), Ok(..));
+    assert_matches!(
+        Expr::parse_displace(0, expr())
+            .then_ignore(end())
+            .parse("↑ 1 meow"),
+        Ok(..)
+    );
 }

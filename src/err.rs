@@ -12,15 +12,18 @@ use codespan_reporting::{
         termcolor::{ColorChoice, StandardStream},
     },
 };
-use tracing::debug;
+use tracing::{debug, instrument, trace};
 
+#[instrument(level = "trace")]
 fn convert_span(src: &str, mut span: Range<usize>) -> Range<usize> {
+    trace!("src.len(): {}", src.len());
+
     let start = src
         .char_indices()
-        .skip(span.start - 1)
+        .skip(dbg!(span.start.saturating_sub(1)))
         .find(|(_, c)| !c.is_whitespace())
-        .unwrap()
-        .0;
+        .map(|(i, _)| i)
+        .unwrap_or(src.len());
 
     while src.chars().nth(span.end - 1).unwrap().is_whitespace() {
         span.end -= 1;
@@ -36,17 +39,19 @@ pub struct Error {
     pub span: Option<Span>,
     pub message: String,
     pub labels: Vec<(Option<Span>, String)>,
+    pub notes: Vec<String>,
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 #[macro_export]
 macro_rules! bail {
-    ( $span:expr, $fmt:literal $(, $($arg:expr),+)? $(; $secondary_span: expr, $secondary_fmt:literal $(, $($secondary_arg:expr),+)?)* ) => {
+    ( $span:expr, $fmt:literal $(, $($arg:expr),+)? $(; $secondary_span: expr, $secondary_fmt:literal $(, $($secondary_arg:expr),+)?)* $(; @note $note_fmt:literal $(, $($note_arg:expr),+)?)* ) => {
         return Err($crate::err::Error {
             span: $span,
             message: format!($fmt, $($($arg),+)?),
             labels: vec![$(($secondary_span, format!($secondary_fmt, $($($secondary_arg),+)?))),*],
+            notes: vec![$((format!($note_fmt, $($($note_arg),+)?))),*],
         })
     };
 }
@@ -92,7 +97,8 @@ impl Error {
 
         let diagnostic = Diagnostic::error()
             .with_message(self.message)
-            .with_labels(labels);
+            .with_labels(labels)
+            .with_notes(self.notes);
 
         let writer = StandardStream::stderr(ColorChoice::Auto);
         let config = codespan_reporting::term::Config::default();

@@ -1,0 +1,14 @@
+def ID: Type 1
+{
+	(X: Type 0) → X → X
+}
+
+def id: ID
+{
+	[X: Type 0, x: X] x
+}
+
+def id_id_id: ID
+{
+	(↑ 1 id) ID id
+}

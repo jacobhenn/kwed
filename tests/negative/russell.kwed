@@ -1,0 +1,88 @@
+[~Directives(type_in_type: true)~]
+
+inductive =(A: Type 0, x: A): A → Type 0
+{
+	refl: = A x x,
+}
+
+def =.cong(A B: Type 0, f: A → B, x y: A, p: = A x y): = B (f x) (f y)
+{
+	=.elim A x ([y: A, _: = A x y] = B (f x) (f y)) (=.refl B (f x)) y p
+}
+
+def =.comp(A: Type 0, x y z: A, p: = A x y, q: = A y z): = A x z
+{
+	=.elim A y ([z: A, _: = A y z] = A x z) p z q
+}
+
+def =.cong2(
+	A B C: Type 0,
+	f: (A, B) → C,
+	a a': A,
+	b b': B,
+	pa: = A a a',
+	pb: = B b b'
+): = C (f a b) (f a' b')
+{
+	=.comp C (f a b) (f a b') (f a' b')
+		(=.cong B C (f a) b b' pb)
+		(=.cong A C ([a: A] f a b') a a' pa)
+}
+
+inductive False: Type 0 {}
+
+inductive Product(A: Type 0, B: A → Type 0): Type 0
+{
+	pair: (a: A, B a) → Product A B
+}
+
+inductive Set: Type 1
+{
+	image: (A: Type 0, f: A → Set) → Set,
+}
+
+def Set.domain: Set → Type 0
+{
+	Set.elim ([_: Set] Type 0) ([A: Type 0, f: A → Set] A)
+}
+
+def ∈(x y: Set): Type 1
+{
+	Set.elim ([_: Set] Type 1)
+		([A: Type 0, f: A → Set] (↑ 1 Product) A ([a: A] (↑ 1 =) Set x (f a)))
+		y
+}
+
+def IsFounded(x: Set): Type 1 { (∈ x x) → False }
+
+def FoundedSet: Type 1
+{
+	(↑ 1 Product) Set IsFounded
+}
+
+def FoundedSet.Set: FoundedSet → Set
+{
+	(↑ 1 Product.elim) Set IsFounded ([_: FoundedSet] Set)
+		([x: Set, _: IsFounded x] x)
+}
+
+def FoundedSet.IsFounded(x: FoundedSet): IsFounded (FoundedSet.Set x)
+{
+	Product.elim Set IsFounded ([x: FoundedSet] IsFounded (FoundedSet.Set x))
+		([x: Set, f: IsFounded x] f)
+}
+
+def R: Set
+{
+	Set.image FoundedSet FoundedSet.Set
+}
+
+def ¬R∈R(R∈R: ∈ R R): False
+{
+	Product.elim FoundedSet ([x: FoundedSet] = Set (FoundedSet.Set x) R)
+		([_: Product FoundedSet ([x: FoundedSet] = Set (FoundedSet.Set x) R)] False)
+		([x: FoundedSet, p: = Set (FoundedSet.Set x) R]
+			FoundedSet.IsFounded x
+				(cong2 Set Set (Type 0) ∈ R (FoundedSet.Set x) R (FoundedSet.Set x) p p)
+		)
+}

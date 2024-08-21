@@ -5,17 +5,18 @@ use crate::{
         desugared::{Expr, Item, Module},
         Path,
     },
+    bail,
     err::Result,
     kernel::{context::Context, typeck::recursible_param_idxs},
 };
 
-use tracing::{instrument, trace};
+use tracing::{debug, instrument, trace};
 
 use uuid::Uuid;
 
 /// Check if the given expression is ready for eliminator-constructor simplification. If so, do it.
-#[instrument(level = "trace", skip_all, fields(elim_call = %elim_call))]
-fn try_eval_elim(elim_call: Expr, md: &Module, ctx: &Context) -> Option<Expr> {
+#[instrument(level = "trace", skip_all, fields(elim_call = %elim_call, ctx = %ctx))]
+fn try_eval_elim(elim_call: Expr, md: &Module, ctx: &Context, depth: usize) -> Option<Expr> {
     let Expr::Path {
         path: head_path, ..
     } = elim_call.head()
@@ -101,7 +102,7 @@ fn try_eval_elim(elim_call: Expr, md: &Module, ctx: &Context) -> Option<Expr> {
             .expect("type-checked constructor calls should have the right number of arguments");
 
         let recursible_arg_ty = recursible_arg
-            .ty(md, ctx)
+            .ty(md, ctx, depth + 1)
             .expect("exprs should be type-checked before they are evaluated");
 
         let rec_call_idx_args = recursible_arg_ty
@@ -137,6 +138,7 @@ impl Expr {
     pub fn substitute(&mut self, target_id: Uuid, sub: &Expr) {
         match self {
             Expr::TypeType { .. } => (),
+            Expr::Displace { arg, .. } => Rc::make_mut(arg).substitute(target_id, sub),
             Expr::Var { id, .. } => {
                 if *id == target_id {
                     *self = sub.clone()
@@ -161,6 +163,7 @@ impl Expr {
     pub fn contains_var(&self, search_id: Uuid) -> bool {
         match self {
             Expr::TypeType { .. } | Expr::Path { .. } => false,
+            Expr::Displace { arg, .. } => arg.contains_var(search_id),
             Expr::Var { id, .. } => *id == search_id,
             Expr::Fn { param, body, .. } => {
                 param.ty.contains_var(search_id) || body.contains_var(search_id)
@@ -174,10 +177,17 @@ impl Expr {
         }
     }
 
-    #[instrument(level = "trace", skip(self, md, ctx), fields(self = %self))]
-    pub fn eval(&mut self, md: &Module, ctx: &Context) -> Result<()> {
+    #[instrument(level = "trace", skip(self, md, ctx), fields(self = %self, ctx = %ctx))]
+    pub fn eval(&mut self, md: &Module, ctx: &Context, depth: usize) -> Result<()> {
+        if let Some(max_depth) = md.directives.max_recursion_depth
+            && depth > max_depth
+        {
+            bail!(None, "max recursion depth ({max_depth}) exceeded");
+        }
+
         match self {
             Expr::TypeType { .. } => (),
+            Expr::Displace { arg, .. } => Rc::make_mut(arg).eval(md, ctx, depth + 1)?,
             Expr::Var { .. } => (),
             Expr::Path { path, .. } => {
                 if let Some(Item::Def { val, .. }) = md.items.get(path) {
@@ -185,35 +195,43 @@ impl Expr {
                 }
             }
             Expr::Fn { param, body, .. } => {
-                Rc::make_mut(param).ty.eval(md, ctx)?;
-                Rc::make_mut(body).eval(md, ctx)?;
+                Rc::make_mut(param).ty.eval(md, ctx, depth + 1)?;
+                Rc::make_mut(body).eval(
+                    md,
+                    &ctx.clone().with_var(param.id, param.ty.clone()),
+                    depth + 1,
+                )?;
 
                 // η-reduction: `[x] f x` reduces to `f` wherever `x` does not occur free in `f`.
-                if let Expr::FnApp { func, arg, .. } = Rc::make_mut(body) {
-                    if let Expr::Var { id: arg_id, .. } = **arg {
-                        if arg_id == param.id && !func.contains_var(param.id) {
-                            *self = (**func).clone();
-                        }
-                    }
+                if let Expr::FnApp { func, arg, .. } = Rc::make_mut(body)
+                    && let Expr::Var { id: arg_id, .. } = **arg
+                    && arg_id == param.id
+                    && !func.contains_var(param.id)
+                {
+                    *self = (**func).clone();
                 }
             }
             Expr::FnType { param, cod, .. } => {
-                Rc::make_mut(param).ty.eval(md, ctx)?;
-                Rc::make_mut(cod).eval(md, ctx)?;
+                Rc::make_mut(param).ty.eval(md, ctx, depth + 1)?;
+                Rc::make_mut(cod).eval(
+                    md,
+                    &ctx.clone().with_var(param.id, param.ty.clone()),
+                    depth + 1,
+                )?;
             }
             Expr::FnApp { func, arg, .. } => {
-                Rc::make_mut(func).eval(md, ctx)?;
+                Rc::make_mut(func).eval(md, ctx, depth + 1)?;
                 if let Expr::Fn { param, body, .. } = Rc::make_mut(func) {
                     Rc::make_mut(body).substitute(param.id, arg);
-                    Rc::make_mut(body).eval(md, ctx)?;
+                    Rc::make_mut(body).eval(md, ctx, depth + 1)?;
 
                     *self = (**body).clone();
                 } else {
-                    Rc::make_mut(arg).eval(md, ctx)?;
+                    Rc::make_mut(arg).eval(md, ctx, depth + 1)?;
 
-                    if let Some(res) = try_eval_elim(self.clone(), md, ctx) {
+                    if let Some(res) = try_eval_elim(self.clone(), md, ctx, depth + 1) {
                         *self = res;
-                        self.eval(md, ctx)?;
+                        self.eval(md, ctx, depth + 1)?;
                     }
                 }
             }
@@ -229,10 +247,10 @@ impl Item {
     pub fn eval_and_insert(mut self, path: Path, md: &mut Module) -> Result<()> {
         match &mut self {
             Item::Def { ty, val } => {
-                ty.eval(md, &Context::Empty)?;
-                val.eval(md, &Context::Empty)?;
+                ty.eval(md, &Context::Empty, 0)?;
+                val.eval(md, &Context::Empty, 0)?;
             }
-            Item::Axiom { ty } => ty.eval(md, &Context::Empty)?,
+            Item::Axiom { ty } => ty.eval(md, &Context::Empty, 0)?,
             Item::Inductive {
                 params,
                 ty,
@@ -240,14 +258,14 @@ impl Item {
             } => {
                 let mut param_ctx = Context::Empty;
                 for param in params {
-                    param.ty.eval(md, &param_ctx)?;
+                    param.ty.eval(md, &param_ctx, 0)?;
                     param_ctx = param_ctx.with_var(param.id, param.ty.clone());
                 }
 
-                ty.eval(md, &Context::Empty)?;
+                ty.eval(md, &Context::Empty, 0)?;
 
                 for (_name, ty) in constructors {
-                    ty.eval(md, &Context::Empty)?;
+                    ty.eval(md, &Context::Empty, 0)?;
                 }
             }
         }

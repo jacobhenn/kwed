@@ -1,0 +1,23 @@
+notation number_0 { ℕ.0 }
+notation number_suc { ℕ.suc }
+
+inductive ℕ: Type 0 {
+	0: ℕ,
+	suc: ℕ → ℕ,
+}
+
+def +(x: ℕ, y: ℕ): ℕ {
+	ℕ.elim ([_: ℕ] ℕ) x ([y': ℕ, x+y': ℕ] ℕ.suc x+y') y
+}
+
+def *(x: ℕ, y: ℕ): ℕ {
+	ℕ.elim ([_: ℕ] ℕ) 0 ([y': ℕ, x*y': ℕ] + x*y' x) y
+}
+
+def !(x: ℕ): ℕ {
+	ℕ.elim ([_: ℕ] ℕ) 1 ([y': ℕ, y'!: ℕ] * (ℕ.suc y') y'!) x
+}
+
+def big: ℕ {
+	1025
+}

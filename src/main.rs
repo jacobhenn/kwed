@@ -1,4 +1,5 @@
 #![feature(iter_intersperse)]
+#![feature(iter_repeat_n)]
 #![feature(exact_size_is_empty)]
 #![feature(assert_matches)]
 #![feature(let_chains)]
@@ -55,7 +56,13 @@ fn main() -> Result<()> {
 
     debug!("parsed module: {module:#?}");
 
-    let mut desugared_module = module.desugared();
+    let mut desugared_module = match module.desugared() {
+        Ok(md) => md,
+        Err(e) => {
+            e.emit(&files)?;
+            return Ok(());
+        }
+    };
 
     debug!("desugared module: {desugared_module:#?}");
 
@@ -75,6 +82,7 @@ fn main() -> Result<()> {
 
 fn build_module(desugared_module: Module) -> crate::err::Result<()> {
     let mut checked_module = Module::new();
+    checked_module.directives = desugared_module.directives;
 
     for (path, item) in desugared_module.items {
         item.type_check(&path, &checked_module)?;

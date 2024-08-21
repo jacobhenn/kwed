@@ -40,6 +40,7 @@ impl Expr {
     fn bind_vars(&mut self, ctx: &Context) -> Result<()> {
         match self {
             Expr::TypeType { .. } | Expr::Var { .. } => (),
+            Expr::Displace { arg, .. } => Rc::make_mut(arg).bind_vars(ctx)?,
             Expr::Path { path, span } => {
                 if let [name] = &mut path.components[..] {
                     if let Some(id) = ctx.id(name) {

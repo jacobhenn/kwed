@@ -1,9 +1,9 @@
-use std::{iter, rc::Rc};
+use std::{cmp, collections::HashSet, iter, rc::Rc};
 
 use crate::{
     ast::{
         desugared::{BindingParam, Expr, Item, Module, Param},
-        sugared, Ident, Path,
+        sugared, Directives, Ident, Path,
     },
     bail,
     err::Result,
@@ -61,9 +61,18 @@ fn elim_ty(
     family_params.push(family_last_param);
 
     // ...and return a Type.
+    // TODO: is this at all a sane way to assign levels to the inputs of an elim?
+    let Expr::TypeType {
+        level: ind_def_level,
+        ..
+    } = ind_def_ty.root_cod()
+    else {
+        panic!("type of inductive def should be valid");
+    };
+
     let family_ty = family_params
         .into_iter()
-        .rfold(Expr::type_type(None), |acc, par| {
+        .rfold(Expr::type_type(*ind_def_level + 1, None), |acc, par| {
             Expr::fn_type(par, acc, None)
         });
 
@@ -182,44 +191,166 @@ fn elim_ty(
 }
 
 impl Expr {
+    #[instrument(level = "trace", skip_all, fields(this = %this, that = %that, check_subtype = check_subtype), ret)]
+    fn subtype_or_eq_impl(
+        this: &Self,
+        that: &Self,
+        ctx: &mut HashSet<[Uuid; 2]>,
+        check_subtype: bool,
+        dvs: &Directives,
+    ) -> bool {
+        match (this, that) {
+            (Expr::TypeType { level: ll, .. }, Expr::TypeType { level: rl, .. }) => {
+                if dvs.type_in_type {
+                    true
+                } else if check_subtype {
+                    ll <= rl
+                } else {
+                    ll == rl
+                }
+            }
+            (Expr::Var { id: lid, .. }, Expr::Var { id: rid, .. }) => {
+                lid == rid || ctx.contains(&[*lid, *rid])
+            }
+            (Expr::Path { path: lpath, .. }, Expr::Path { path: rpath, .. }) => lpath == rpath,
+            (
+                Expr::Fn {
+                    param: lparam,
+                    body: lbody,
+                    ..
+                },
+                Expr::Fn {
+                    param: rparam,
+                    body: rbody,
+                    ..
+                },
+            ) => {
+                let params_eq = Self::subtype_or_eq_impl(&lparam.ty, &rparam.ty, ctx, false, dvs);
+
+                ctx.insert([lparam.id, rparam.id]);
+                let bodies_eq = Self::subtype_or_eq_impl(lbody, rbody, ctx, false, dvs);
+                ctx.remove(&[lparam.id, rparam.id]);
+
+                params_eq && bodies_eq
+            }
+            (
+                Expr::FnType {
+                    param: lparam,
+                    cod: lcod,
+                    ..
+                },
+                Expr::FnType {
+                    param: rparam,
+                    cod: rcod,
+                    ..
+                },
+            ) => {
+                let params_eq = Self::subtype_or_eq_impl(&lparam.ty, &rparam.ty, ctx, false, dvs);
+
+                ctx.insert([lparam.id, rparam.id]);
+                let cods_eq = Self::subtype_or_eq_impl(lcod, rcod, ctx, check_subtype, dvs);
+                ctx.remove(&[lparam.id, rparam.id]);
+
+                params_eq && cods_eq
+            }
+            (
+                Expr::FnApp {
+                    func: lfunc,
+                    arg: larg,
+                    ..
+                },
+                Expr::FnApp {
+                    func: rfunc,
+                    arg: rarg,
+                    ..
+                },
+            ) => {
+                Self::subtype_or_eq_impl(lfunc, rfunc, ctx, false, dvs)
+                    && Self::subtype_or_eq_impl(larg, rarg, ctx, false, dvs)
+            }
+            (_, _) => false,
+        }
+    }
+
+    pub fn subtype_or_eq(this: &Self, that: &Self, dvs: &Directives) -> bool {
+        Self::subtype_or_eq_impl(this, that, &mut HashSet::new(), true, dvs)
+    }
+
     #[instrument(level = "trace", skip(md, ctx), fields(self = %self, expected = %expected))]
-    fn expect_ty(&self, expected: &Self, md: &Module, ctx: &Context) -> Result<()> {
-        let mut expected = expected.clone();
-        let expected_ty = expected.ty(md, ctx)?;
-
-        if !Self::eq_up_to_vars(&expected_ty, &Self::type_type(None)) {
-            bail!(
-                expected.span(),
-                "mismatched types: expected `Type`, found `{expected_ty}`"
-            );
+    fn expect_ty(&self, expected: &Self, md: &Module, ctx: &Context, depth: usize) -> Result<()> {
+        let expected_ty = expected.ty(md, ctx, depth + 1)?;
+        if !expected_ty.is_type_type() {
+            bail!(expected.span(), "expected type, found `{expected_ty}`");
         }
 
-        expected.eval(md, ctx)?;
+        let mut expected_evald = expected.clone();
+        expected_evald.eval(md, ctx, 0)?;
 
-        let mut found = self.ty(md, ctx)?;
-        found.eval(md, ctx)?;
+        let found = self.ty(md, ctx, depth + 1)?;
+        let mut found_evald = found.clone();
+        found_evald.eval(md, ctx, 0)?;
 
-        if !Self::eq_up_to_vars(&expected, &found) {
-            bail!(
-                self.span(),
-                "mismatched types: expected `{expected}`, found `{found}`";
-                expected.span(),
-                "expected this"
-            );
+        if let Expr::TypeType {
+            level: found_level, ..
+        } = found_evald
+            && let Expr::TypeType {
+                level: expected_level,
+                ..
+            } = expected_evald
+            && found_level <= expected_level
+        {
+            return Ok(());
+        } else if Self::subtype_or_eq(&found_evald, &expected_evald, &md.directives) {
+            return Ok(());
         }
-        Ok(())
+
+        bail!(
+            self.span(),
+            "mismatched types: expected `{expected}`, found `{found}`";
+            expected_evald.span(),
+            "expected this";
+            @note "expected `{expected_evald}`";
+            @note "found    `{found_evald}`"
+        )
+    }
+
+    #[instrument(level = "trace", skip_all, fields(self = %self))]
+    fn expect_ty_ty(&self, md: &Module, ctx: &Context, depth: usize) -> Result<usize> {
+        let mut found = self.ty(md, ctx, depth + 1)?;
+        found.eval(md, ctx, 0)?;
+
+        match found {
+            Expr::TypeType { level, .. } => Ok(level),
+            other => bail!(self.span(), "expected type, found `{other}`"),
+        }
     }
 
     // TODO: verify assumption that this returns exprs in normal form
     #[instrument(level = "trace", skip(self, md, ctx), fields(self = %self, ctx = %ctx))]
-    pub fn ty(&self, md: &Module, ctx: &Context) -> Result<Self> {
+    pub fn ty(&self, md: &Module, ctx: &Context, depth: usize) -> Result<Self> {
+        if let Some(max_depth) = md.directives.max_recursion_depth
+            && depth > max_depth
+        {
+            bail!(None, "max recursion depth ({max_depth}) exceeded");
+        }
+
         use Expr::*;
         let res = match self {
-            TypeType { .. } => TypeType { span: None },
-            Var { id, .. } => ctx
-                .ty_of_var(*id)
-                .expect("variables are bound correctly")
-                .clone(),
+            TypeType { level, .. } => TypeType {
+                level: level + 1,
+                span: None,
+            },
+            Displace { amount, arg, .. } => {
+                let mut ty = arg.ty(md, ctx, depth + 1)?;
+                ty.displace_ty(*amount);
+                ty
+            }
+            Var { id, span, .. } => {
+                let Some(ty) = ctx.ty_of_var(*id) else {
+                    bail!(span.clone(), "INTERNAL ERROR: unbound variable `{self}`")
+                };
+                ty.clone()
+            }
             Path { path, span } => {
                 if let Some(item) = md.items.get(path) {
                     item.ty()
@@ -255,9 +386,13 @@ impl Expr {
             }
 
             Fn { param, body, .. } => {
-                param.ty.expect_ty(&TypeType { span: None }, md, ctx)?;
+                param.ty.expect_ty_ty(md, ctx, depth + 1)?;
 
-                let mut cod = body.ty(md, &ctx.clone().with_var(param.id, param.ty.clone()))?;
+                let mut cod = body.ty(
+                    md,
+                    &ctx.clone().with_var(param.id, param.ty.clone()),
+                    depth + 1,
+                )?;
 
                 let mut body = (**body).clone();
                 let new_id = Uuid::new_v4();
@@ -279,22 +414,25 @@ impl Expr {
                 }
             }
             FnType { param, cod, .. } => {
-                param.ty.expect_ty(&TypeType { span: None }, md, ctx)?;
+                let param_level = param.ty.expect_ty_ty(md, ctx, depth + 1)?;
 
                 let ctx = ctx.clone().with_var(param.id, param.ty.clone());
-                cod.expect_ty(&TypeType { span: None }, md, &ctx)?;
+                let cod_level = cod.expect_ty_ty(md, &ctx, depth + 1)?;
 
-                TypeType { span: None }
+                TypeType {
+                    level: cmp::max(param_level, cod_level),
+                    span: None,
+                }
             }
             FnApp { func, arg, .. } => {
-                let mut func_type = func.ty(md, ctx)?;
-                func_type.eval(md, ctx)?;
+                let mut func_type = func.ty(md, ctx, depth + 1)?;
+                func_type.eval(md, ctx, 0)?;
 
                 let FnType { param, mut cod, .. } = func_type else {
                     bail!(func.span(), "expected function, found `{func_type}`");
                 };
 
-                arg.expect_ty(&param.ty, md, ctx)?;
+                arg.expect_ty(&param.ty, md, ctx, depth + 1)?;
 
                 Rc::make_mut(&mut cod).substitute(param.id, arg);
                 Rc::unwrap_or_clone(cod)
@@ -339,8 +477,10 @@ impl Item {
         }
 
         match self {
-            Item::Def { ty, val } => val.expect_ty(ty, md, &Context::Empty)?,
-            Item::Axiom { ty } => ty.expect_ty(&Expr::type_type(None), md, &Context::Empty)?,
+            Item::Def { ty, val } => val.expect_ty(ty, md, &Context::Empty, 0)?,
+            Item::Axiom { ty } => {
+                ty.expect_ty_ty(md, &Context::Empty, 0)?;
+            }
             Item::Inductive {
                 params,
                 ty,
@@ -348,13 +488,11 @@ impl Item {
             } => {
                 let mut ctx = Context::Empty;
                 for param in params {
-                    param
-                        .ty
-                        .expect_ty(&Expr::TypeType { span: None }, md, &ctx)?;
+                    param.ty.expect_ty_ty(md, &ctx, 0)?;
                     ctx = ctx.with_var(param.id, param.ty.clone());
                 }
 
-                ty.expect_ty(&Expr::TypeType { span: None }, md, &ctx)?;
+                let ty_level = ty.expect_ty_ty(md, &ctx, 0)?;
 
                 expect_valid_inductive_def_ty(ty)?;
 
@@ -364,12 +502,21 @@ impl Item {
                     ty: self.ty(),
                 };
 
-                for (_name, ty) in constructors {
-                    ty.expect_ty(&Expr::TypeType { span: None }, md, &ctx)?;
+                for (cons_name, cons_ty) in constructors {
+                    let cons_ty_level = cons_ty.expect_ty_ty(md, &ctx, 0)?;
 
-                    if !ty.root_cod().head().is_path_to(path) {
+                    if cons_ty_level > ty_level - 1 {
                         bail!(
-                            ty.root_cod().span(),
+                            cons_ty.span(),
+                            "Size conflict: constructor `{cons_name}` exists at level `Type {cons_ty_level}`, but inductive type `{path}` exists at level `Type {}`", ty_level - 1;
+                            path.span(),
+                            "This exists at level `Type {}`", ty_level - 1
+                        );
+                    }
+
+                    if !cons_ty.root_cod().head().is_path_to(path) {
+                        bail!(
+                            cons_ty.root_cod().span(),
                             "Constructor for `{path}` does not return `{path}`"
                         );
                     }

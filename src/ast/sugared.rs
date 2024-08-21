@@ -1,9 +1,12 @@
-use super::{desugared, Ident, Path, Span};
+use crate::{bail, err::Result};
 
-use std::{ops::Range, rc::Rc};
+use super::{desugared, Directives, Ident, Path, Span};
+
+use std::{collections::HashMap, iter, ops::Range, rc::Rc};
 
 use indexmap::IndexMap;
 
+use tracing::debug;
 use uuid::Uuid;
 
 #[derive(Debug, PartialEq, Clone)]
@@ -12,6 +15,13 @@ pub enum Expr {
     Error,
 
     TypeType {
+        level: usize,
+        span: Span,
+    },
+
+    Displace {
+        amount: usize,
+        arg: Box<Self>,
         span: Span,
     },
 
@@ -33,6 +43,11 @@ pub enum Expr {
     FnApp {
         func: Box<Self>,
         args: Vec<Self>,
+        span: Span,
+    },
+
+    Number {
+        number: i64,
         span: Span,
     },
 }
@@ -65,14 +80,24 @@ pub enum Item {
 
 #[derive(Debug, PartialEq)]
 pub struct Module {
+    pub directives: Directives,
+    pub notation: HashMap<String, Expr>,
     pub items: IndexMap<Path, Item>,
 }
 
 impl Expr {
-    fn desugared(self) -> desugared::Expr {
-        match self {
+    fn desugared(self, not: &HashMap<String, Expr>) -> Result<desugared::Expr> {
+        Ok(match self {
             Expr::Error => panic!("Error node made it through to desugaring"),
-            Expr::TypeType { span } => desugared::Expr::TypeType { span: Some(span) },
+            Expr::TypeType { level, span } => desugared::Expr::TypeType {
+                level,
+                span: Some(span),
+            },
+            Expr::Displace { amount, arg, span } => desugared::Expr::Displace {
+                amount,
+                arg: Rc::new(arg.desugared(not)?),
+                span: Some(span),
+            },
             Expr::Path { path, span } => desugared::Expr::Path {
                 path,
                 span: Some(span),
@@ -82,11 +107,13 @@ impl Expr {
                 body,
                 span,
             } => {
-                let body = Rc::new(body.desugared());
+                let body = Rc::new(body.desugared(not)?);
 
                 params
                     .into_iter()
-                    .map(|par| par.desugared())
+                    .map(|par| par.desugared(not))
+                    .collect::<Result<Vec<_>>>()?
+                    .into_iter()
                     .flatten()
                     .map(desugared::Param::binding)
                     .rfold(Rc::unwrap_or_clone(body), |acc, param| {
@@ -98,11 +125,15 @@ impl Expr {
                 cod,
                 span,
             } => {
-                let cod = Rc::new(cod.desugared());
+                let cod = Rc::new(cod.desugared(not)?);
 
+                // TODO: it seems like I'm repeating this every time. could I turn it into a
+                // method on `Params`?
                 params
                     .into_iter()
-                    .map(|par| par.desugared())
+                    .map(|par| par.desugared(not))
+                    .collect::<Result<Vec<_>>>()?
+                    .into_iter()
                     .flatten()
                     .map(desugared::Param::binding)
                     .rfold(Rc::unwrap_or_clone(cod), |acc, param| {
@@ -110,17 +141,40 @@ impl Expr {
                     })
             }
             Expr::FnApp { func, args, span } => {
-                args.into_iter().fold(func.desugared(), |acc, arg| {
-                    desugared::Expr::fn_app(acc, arg.desugared(), Some(span.clone()))
-                })
+                args.into_iter().fold(func.desugared(not), |acc, arg| {
+                    acc.and_then(|acc| {
+                        arg.desugared(not)
+                            .map(|arg| desugared::Expr::fn_app(acc, arg, Some(span.clone())))
+                    })
+                })?
             }
-        }
+            Expr::Number { number, span } => {
+                let Some(number_0) = not.get("number_0") else {
+                    bail!(Some(span), "notation `number_0` not set");
+                };
+
+                let Some(number_suc) = not.get("number_suc") else {
+                    bail!(Some(span), "notation `number_suc` not set");
+                };
+
+                if let Ok(n) = usize::try_from(number) {
+                    let res = iter::repeat_n(number_suc.clone().desugared(&HashMap::new())?, n)
+                        .rfold(number_0.clone().desugared(&HashMap::new())?, |acc, f| {
+                            desugared::Expr::fn_app(f, acc, Some(span.clone()))
+                        });
+
+                    res
+                } else {
+                    bail!(Some(span), "negative number literals are not yet supported")
+                }
+            }
+        })
     }
 }
 
 impl Item {
-    fn desugared(self) -> desugared::Item {
-        match self {
+    fn desugared(self, not: &HashMap<String, Expr>) -> Result<desugared::Item> {
+        Ok(match self {
             Item::Def {
                 args: Params(params),
                 ty,
@@ -129,25 +183,31 @@ impl Item {
                 let ty = params
                     .iter()
                     .cloned()
-                    .map(Param::desugared)
+                    .map(|par| par.desugared(not))
+                    .collect::<Result<Vec<_>>>()?
+                    .into_iter()
                     .flatten()
                     .map(desugared::Param::binding)
-                    .rfold(ty.desugared(), |acc, param| {
+                    .rfold(ty.desugared(not)?, |acc, param| {
                         desugared::Expr::fn_type(param, acc, None)
                     });
 
                 let val = params
                     .into_iter()
-                    .map(|par| par.desugared())
+                    .map(|par| par.desugared(not))
+                    .collect::<Result<Vec<_>>>()?
+                    .into_iter()
                     .flatten()
                     .map(desugared::Param::binding)
-                    .rfold(val.desugared(), |acc, param| {
+                    .rfold(val.desugared(not)?, |acc, param| {
                         desugared::Expr::func(param, acc, None)
                     });
 
                 desugared::Item::Def { ty, val }
             }
-            Item::Axiom { ty } => desugared::Item::Axiom { ty: ty.desugared() },
+            Item::Axiom { ty } => desugared::Item::Axiom {
+                ty: ty.desugared(not)?,
+            },
             Item::Inductive {
                 params,
                 ty,
@@ -156,47 +216,53 @@ impl Item {
                 let desugared_params: Vec<desugared::BindingParam> = params
                     .0
                     .into_iter()
-                    .map(|param| param.desugared())
+                    .map(|param| param.desugared(not))
+                    .collect::<Result<Vec<_>>>()?
+                    .into_iter()
                     .flatten()
                     .map(desugared::Param::binding)
                     .collect();
 
                 desugared::Item::Inductive {
                     params: desugared_params.clone(),
-                    ty: ty.desugared(),
+                    ty: ty.desugared(not)?,
                     constructors: constructors
                         .expect("error nodes should not make it to desugaring")
                         .into_iter()
-                        .map(|(name, ty)| (name, ty.desugared()))
-                        .collect(),
+                        .map(|(name, ty)| ty.desugared(not).map(|ty| (name, ty)))
+                        .collect::<Result<_>>()?,
                 }
             }
-        }
+        })
     }
 }
 
 impl Param {
-    fn desugared(self) -> Vec<desugared::Param> {
-        let ty = self.ty.desugared();
+    fn desugared(self, not: &HashMap<String, Expr>) -> Result<Vec<desugared::Param>> {
+        let ty = self.ty.desugared(not)?;
 
-        self.names
+        Ok(self
+            .names
             .into_iter()
             .map(|name| desugared::Param {
                 name,
                 ty: ty.clone(),
             })
-            .collect()
+            .collect())
     }
 }
 
 impl Module {
-    pub fn desugared(self) -> desugared::Module {
-        desugared::Module {
-            items: self
-                .items
-                .into_iter()
-                .map(|(path, item)| (path, item.desugared()))
-                .collect(),
-        }
+    pub fn desugared(self) -> Result<desugared::Module> {
+        let items: IndexMap<Path, desugared::Item> = self
+            .items
+            .into_iter()
+            .map(|(path, item)| item.desugared(&self.notation).map(|it| (path, it)))
+            .collect::<Result<_>>()?;
+
+        Ok(desugared::Module {
+            directives: self.directives,
+            items,
+        })
     }
 }

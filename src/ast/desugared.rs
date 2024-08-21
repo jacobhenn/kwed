@@ -1,4 +1,4 @@
-use super::{Ident, Path, Span};
+use super::{Directives, Ident, Path, Span};
 
 use std::{collections::HashSet, fmt::Display, rc::Rc};
 
@@ -6,11 +6,20 @@ use crossterm::style::{Color, Stylize};
 
 use indexmap::IndexMap;
 
+use tracing::instrument;
+
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     TypeType {
+        level: usize,
+        span: Option<Span>,
+    },
+
+    Displace {
+        amount: usize,
+        arg: Rc<Self>,
         span: Option<Span>,
     },
 
@@ -69,7 +78,7 @@ impl BindingParam {
         let id = Uuid::new_v4();
 
         Self {
-            name: Ident::from_id(id),
+            name: Ident::blank(),
             id,
             ty,
         }
@@ -109,6 +118,7 @@ pub enum Item {
 
 #[derive(Debug, PartialEq)]
 pub struct Module {
+    pub directives: Directives,
     pub items: IndexMap<Path, Item>,
 }
 
@@ -123,7 +133,8 @@ pub(crate) fn uuid_color(id: Uuid) -> Color {
 impl Display for Expr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Expr::TypeType { .. } => write!(f, "Type"),
+            Expr::TypeType { level, .. } => write!(f, "Type {level}"),
+            Expr::Displace { amount, arg, .. } => write!(f, "↑ {amount} {arg}"),
             Expr::Var { id, name, .. } => {
                 write!(f, "{}", name.name.as_str().with(uuid_color(*id)),)
             }
@@ -188,8 +199,8 @@ impl Display for Item {
 }
 
 impl Expr {
-    pub fn type_type(span: Option<Span>) -> Self {
-        Self::TypeType { span }
+    pub fn type_type(level: usize, span: Option<Span>) -> Self {
+        Self::TypeType { level, span }
     }
 
     pub fn var(id: Uuid, name: Ident, span: Option<Span>) -> Self {
@@ -224,10 +235,19 @@ impl Expr {
         }
     }
 
+    pub fn is_type_type(&self) -> bool {
+        match self {
+            Self::TypeType { .. } => true,
+            _ => false,
+        }
+    }
+
     pub fn is_atomic(&self) -> bool {
         match self {
             Self::TypeType { .. } | Self::Var { .. } | Self::Path { .. } => true,
-            Self::Fn { .. } | Self::FnType { .. } | Self::FnApp { .. } => false,
+            Self::Fn { .. } | Self::FnType { .. } | Self::FnApp { .. } | Self::Displace { .. } => {
+                false
+            }
         }
     }
 
@@ -357,86 +377,43 @@ impl Expr {
 
     pub fn span(&self) -> Option<Span> {
         match self {
-            Expr::TypeType { span } => span.clone(),
-            Expr::Var { span, .. } => span.clone(),
-            Expr::Path { span, .. } => span.clone(),
-            Expr::Fn { span, .. } => span.clone(),
-            Expr::FnType { span, .. } => span.clone(),
-            Expr::FnApp { span, .. } => span.clone(),
+            Expr::TypeType { span, .. }
+            | Expr::Displace { span, .. }
+            | Expr::Var { span, .. }
+            | Expr::Path { span, .. }
+            | Expr::Fn { span, .. }
+            | Expr::FnType { span, .. }
+            | Expr::FnApp { span, .. } => span.clone(),
         }
     }
 
-    fn eq_impl(this: &Self, that: &Self, ctx: &mut HashSet<[Uuid; 2]>) -> bool {
-        match (this, that) {
-            (Expr::TypeType { .. }, Expr::TypeType { .. }) => true,
-            (Expr::Var { id: lid, .. }, Expr::Var { id: rid, .. }) => {
-                lid == rid || ctx.contains(&[*lid, *rid])
+    pub fn displace_ty(&mut self, amount: usize) {
+        match self {
+            Expr::Var { .. } | Expr::Path { .. } => (),
+            Expr::Displace { .. } => {
+                panic!("`displace` shouldn't encounter a `Displace` expression")
             }
-            (Expr::Path { path: lpath, .. }, Expr::Path { path: rpath, .. }) => lpath == rpath,
-            (
-                Expr::Fn {
-                    param: lparam,
-                    body: lbody,
-                    ..
-                },
-                Expr::Fn {
-                    param: rparam,
-                    body: rbody,
-                    ..
-                },
-            ) => {
-                let params_eq = Self::eq_impl(&lparam.ty, &rparam.ty, ctx);
-
-                ctx.insert([lparam.id, rparam.id]);
-                let bodies_eq = Self::eq_impl(lbody, rbody, ctx);
-                ctx.remove(&[lparam.id, rparam.id]);
-
-                params_eq && bodies_eq
+            Expr::TypeType { level, .. } => *level += amount,
+            Expr::Fn { param, body, .. } => {
+                Rc::make_mut(param).ty.displace_ty(amount);
+                Rc::make_mut(body).displace_ty(amount);
             }
-            (
-                Expr::FnType {
-                    param: lparam,
-                    cod: lcod,
-                    ..
-                },
-                Expr::FnType {
-                    param: rparam,
-                    cod: rcod,
-                    ..
-                },
-            ) => {
-                let params_eq = Self::eq_impl(&lparam.ty, &rparam.ty, ctx);
-
-                ctx.insert([lparam.id, rparam.id]);
-                let cods_eq = Self::eq_impl(lcod, rcod, ctx);
-                ctx.remove(&[lparam.id, rparam.id]);
-
-                params_eq && cods_eq
+            Expr::FnType { param, cod, .. } => {
+                Rc::make_mut(param).ty.displace_ty(amount);
+                Rc::make_mut(cod).displace_ty(amount);
             }
-            (
-                Expr::FnApp {
-                    func: lfunc,
-                    arg: larg,
-                    ..
-                },
-                Expr::FnApp {
-                    func: rfunc,
-                    arg: rarg,
-                    ..
-                },
-            ) => Self::eq_impl(lfunc, rfunc, ctx) && Self::eq_impl(larg, rarg, ctx),
-            (_, _) => false,
+            Expr::FnApp { func, arg, .. } => {
+                Rc::make_mut(func).displace_ty(amount);
+                Rc::make_mut(arg).displace_ty(amount);
+            }
         }
-    }
-
-    pub fn eq_up_to_vars(this: &Self, that: &Self) -> bool {
-        Self::eq_impl(this, that, &mut HashSet::new())
     }
 }
 
 impl Module {
     pub fn new() -> Self {
         Self {
+            directives: Directives::default(),
             items: IndexMap::new(),
         }
     }
