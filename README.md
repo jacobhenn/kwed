@@ -25,3 +25,5 @@ def ℕ.+(x: ℕ, y: ℕ): ℕ
     y
 }
 ```
+
+for a more advanced example, see [examples/1+1!=3.kwed](https://github.com/jacobhenn/kwed/blob/main/examples/1%2B1!%3D3.kwed).

@@ -69,6 +69,18 @@ impl Path {
         Ident::parse(file_id)
             .separated_by(just('.').padded_by(pad()))
             .at_least(1)
+            .try_map(|components, span| {
+                if let [name] = &components[..]
+                    && name.name.parse::<i64>().is_ok()
+                {
+                    Err(Simple::custom(
+                        span,
+                        format!("a path may not be a single digit string"),
+                    ))
+                } else {
+                    Ok(components)
+                }
+            })
             .map(|components| Self { components })
     }
 }
@@ -229,13 +241,17 @@ impl Item {
 impl Expr {
     pub fn parse_type_type(file_id: usize) -> impl Parser<char, Self, Error = Simple<char>> {
         text::keyword("Type")
-            .ignore_then(text::int(10).padded_by(pad()))
-            .try_map(|s: String, span| {
-                s.parse::<usize>()
-                    .map_err(|e| Simple::custom(span, format!("{e}")))
-            })
+            .ignore_then(
+                text::int(10)
+                    .padded_by(pad())
+                    .try_map(|s: String, span| {
+                        s.parse::<usize>()
+                            .map_err(|e| Simple::custom(span, format!("{e}")))
+                    })
+                    .or_not(),
+            )
             .map_with_span(move |level, range| Self::TypeType {
-                level,
+                level: level.unwrap_or(0),
                 span: Span::new(file_id, range),
             })
             .debug("type type")
@@ -360,9 +376,9 @@ impl Expr {
     ) -> impl Parser<char, Self, Error = Simple<char>> + 'a {
         choice((
             Self::parse_type_type(file_id),
-            Self::parse_number(file_id),
             Self::parse_path(file_id),
             Self::parse_in_parens(expr),
+            Self::parse_number(file_id),
         ))
         .debug("atomic expression")
     }

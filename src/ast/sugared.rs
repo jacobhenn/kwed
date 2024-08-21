@@ -86,6 +86,19 @@ pub struct Module {
 }
 
 impl Expr {
+    fn span_mut(&mut self) -> &mut Span {
+        match self {
+            Expr::Error => panic!("error node made it to desugaring"),
+            Expr::TypeType { span, .. }
+            | Expr::Displace { span, .. }
+            | Expr::Path { span, .. }
+            | Expr::Fn { span, .. }
+            | Expr::FnType { span, .. }
+            | Expr::FnApp { span, .. }
+            | Expr::Number { span, .. } => span,
+        }
+    }
+
     fn desugared(self, not: &HashMap<String, Expr>) -> Result<desugared::Expr> {
         Ok(match self {
             Expr::Error => panic!("Error node made it through to desugaring"),
@@ -149,17 +162,20 @@ impl Expr {
                 })?
             }
             Expr::Number { number, span } => {
-                let Some(number_0) = not.get("number_0") else {
+                let Some(mut number_0) = not.get("number_0").cloned() else {
                     bail!(Some(span), "notation `number_0` not set");
                 };
 
-                let Some(number_suc) = not.get("number_suc") else {
+                let Some(mut number_suc) = not.get("number_suc").cloned() else {
                     bail!(Some(span), "notation `number_suc` not set");
                 };
 
+                *number_0.span_mut() = span.clone();
+                *number_suc.span_mut() = span.clone();
+
                 if let Ok(n) = usize::try_from(number) {
-                    let res = iter::repeat_n(number_suc.clone().desugared(&HashMap::new())?, n)
-                        .rfold(number_0.clone().desugared(&HashMap::new())?, |acc, f| {
+                    let res = iter::repeat_n(number_suc.desugared(&HashMap::new())?, n)
+                        .rfold(number_0.desugared(&HashMap::new())?, |acc, f| {
                             desugared::Expr::fn_app(f, acc, Some(span.clone()))
                         });
 
