@@ -1,0 +1,27 @@
+inductive ℕ: Type
+{
+	0: ℕ,
+	suc: ℕ → ℕ,
+}
+
+def ℕ.pred: ℕ → ℕ
+{
+	ℕ.elim
+		([_: ℕ] ℕ)
+		ℕ.0
+		([x' _: ℕ] x')
+}
+
+def ℕ.+(x: ℕ, y: ℕ): ℕ
+{
+	ℕ.elim
+		([_: ℕ] ℕ)
+		x
+		([y': ℕ, y'_rec: ℕ] ℕ.suc y'_rec)
+		y
+}
+
+def ℕ.=0: ℕ → Type
+{
+	ℕ.elim ([_: ℕ] Type) Super.Core.Unit ([_: ℕ, _: Type] Lib.Core.False)
+}

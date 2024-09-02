@@ -1,0 +1,14 @@
+inductive =(A: Type 0, x: A): A → Type 0
+{
+	refl: = A x x,
+}
+
+def =.cong(A B: Type 0, f: A → B, x y: A, p: = A x y): = B (f x) (f y)
+{
+	=.elim A x ([y: A, _: = A x y] = B (f x) (f y)) (=.refl B (f x)) y p
+}
+
+def =.comp(A: Type 0, x y z: A, p: = A x y, q: = A y z): = A x z
+{
+	=.elim A y ([z: A, _: = A y z] = A x z) p z q
+}

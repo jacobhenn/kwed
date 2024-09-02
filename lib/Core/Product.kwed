@@ -1,0 +1,31 @@
+// Dependent product of a base type and a family over the base
+inductive Product(A: Type, B: A → Type): Type {
+    pair: (a: A, B a) → Product A B,
+}
+
+// Get the first element of a pair
+def Product.first(A: Type, B: A → Type): (Product A B) → A {
+    Product.elim A B ([_: Product A B] A) ([a: A, _: B a] a) 
+}
+
+// Get the second element of a pair
+def Product.second(A: Type, B: A → Type): (pair: Product A B) → B (Product.first A B pair) {
+    Product.elim A B ([pair: Product A B] B (Product.first A B pair)) ([a: A, b: B a] b) 
+}
+
+// Non-dependent Cartesian product of two types
+def ×(A B: Type): Type {
+    Product A ([_: A] B)
+}
+
+def ×.uncurry(A B C: Type, f: (a: A, b: B) → C): (× A B) → C {
+    Product.elim A ([_: A] B) ([_: Product A ([_: A] B)] C) ([a: A, b: B] f a b)
+}
+
+def ×.first(A B: Type, ): (× A B) → A {
+    Product.first A ([_: A] B)
+}
+
+def ×.second(A B: Type, ): (× A B) → B {
+    Product.second A ([_: A] B)
+}

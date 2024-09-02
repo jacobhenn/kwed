@@ -1,16 +1,13 @@
 use std::rc::Rc;
 
 use crate::{
-    ast::{
-        desugared::{Expr, Item, Module},
-        Path,
-    },
+    ast::desugared::{Expr, Item, Module},
     bail,
     err::Result,
     kernel::{context::Context, typeck::recursible_param_idxs},
 };
 
-use tracing::{debug, instrument, trace};
+use tracing::{instrument, trace};
 
 use uuid::Uuid;
 
@@ -34,6 +31,7 @@ fn try_eval_elim(elim_call: Expr, md: &Module, ctx: &Context, depth: usize) -> O
         params: ind_def_params,
         ty: ind_def_ty,
         constructors,
+        ..
     }) = md.items.get(&ind_def_path)
     else {
         return None;
@@ -87,7 +85,7 @@ fn try_eval_elim(elim_call: Expr, md: &Module, ctx: &Context, depth: usize) -> O
         .map(|&arg| arg.clone())
         .collect();
 
-    for i in recursible_param_idxs(&ind_def_path, ind_def_params, cons_ty) {
+    for i in recursible_param_idxs(&ind_def_path, &ind_def_params, cons_ty) {
         let mut rec_call_args: Vec<Expr> = elim_call.args().into_iter().cloned().collect();
 
         for _ in 0..(ind_def_ty.fn_ty_params().len() + 1) {
@@ -114,20 +112,14 @@ fn try_eval_elim(elim_call: Expr, md: &Module, ctx: &Context, depth: usize) -> O
         rec_call_args.extend(rec_call_idx_args);
         rec_call_args.push(recursible_arg.clone());
 
-        let rec_call = rec_call_args
-            .into_iter()
-            .fold(elim_call.head().clone(), |acc, arg| {
-                Expr::fn_app(acc, arg, None)
-            });
+        let rec_call = elim_call.head().clone().with_args(rec_call_args);
 
         arm_args.push(rec_call);
     }
 
     let arm_call = arm_args
         .into_iter()
-        .fold((*matching_arm).clone(), |acc, arg| {
-            Expr::fn_app(acc, arg, None)
-        });
+        .fold((*matching_arm).clone(), |acc, arg| acc.with_arg(arg));
 
     trace!("arm_call: {arm_call}");
 
@@ -244,17 +236,18 @@ impl Expr {
 }
 
 impl Item {
-    pub fn eval_and_insert(mut self, path: Path, md: &mut Module) -> Result<()> {
-        match &mut self {
-            Item::Def { ty, val } => {
+    pub fn eval(&mut self, md: &mut Module) -> Result<()> {
+        match self {
+            Item::Def { ty, val, .. } => {
                 ty.eval(md, &Context::Empty, 0)?;
                 val.eval(md, &Context::Empty, 0)?;
             }
-            Item::Axiom { ty } => ty.eval(md, &Context::Empty, 0)?,
+            Item::Axiom { ty, .. } => ty.eval(md, &Context::Empty, 0)?,
             Item::Inductive {
                 params,
                 ty,
                 constructors,
+                ..
             } => {
                 let mut param_ctx = Context::Empty;
                 for param in params {
@@ -269,8 +262,6 @@ impl Item {
                 }
             }
         }
-
-        md.items.insert(path, self);
 
         Ok(())
     }

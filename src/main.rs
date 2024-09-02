@@ -1,10 +1,10 @@
 #![feature(iter_intersperse)]
-#![feature(iter_repeat_n)]
 #![feature(exact_size_is_empty)]
 #![feature(assert_matches)]
 #![feature(let_chains)]
 #![feature(round_char_boundary)]
 #![feature(iter_chain)]
+#![allow(irrefutable_let_patterns)]
 
 mod ast;
 
@@ -14,80 +14,75 @@ mod parse;
 
 mod kernel;
 
-use crate::ast::desugared::Module;
+use crate::ast::sugared;
 
-use std::fs;
+use std::{mem, path::PathBuf};
 
-use anyhow::Result;
-
-use chumsky::Parser;
-
+use ast::Ident;
+use clap::Parser as _;
 use codespan_reporting::files::SimpleFiles;
+use tracing::{debug, info, Level};
 
-use tracing::{debug, info};
+#[derive(clap::Parser, Debug)]
+/// Type-checker for the kwed proof language (see https://github.com/jacobhenn/kwed).
+struct Args {
+    /// path to the kwed module to type-check
+    path: PathBuf,
+}
 
-fn main() -> Result<()> {
+fn main() -> anyhow::Result<()> {
+    let env_filter = tracing_subscriber::EnvFilter::builder()
+        .with_default_directive(Level::INFO.into())
+        .from_env()?;
+
     tracing_subscriber::fmt()
         .without_time()
         .with_file(true)
         .with_line_number(true)
         .pretty()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_env_filter(env_filter)
         .with_span_events(tracing_subscriber::fmt::format::FmtSpan::ENTER)
         .init();
 
-    let path = std::env::args().skip(1).next().unwrap();
+    let args = Args::parse();
 
-    let src = fs::read_to_string(&path).unwrap();
+    let mut files = SimpleFiles::new();
 
-    let mut files: SimpleFiles<&str, &str> = SimpleFiles::new();
-    let file_id = files.add(&path, &src);
+    let module = sugared::Module::load_from_path(&args.path, &mut files)?;
 
-    let (module, errs) = ast::sugared::Module::parse_final(file_id).parse_recovery(src.as_str());
-
-    if !errs.is_empty() {
-        debug!("recovered AST: {module:#?}");
-
-        err::emit_parse_err(errs, file_id, &files)?;
-        return Ok(());
-    };
-
-    let module = module.expect("errorless parsing should be successful");
-
-    debug!("parsed module: {module:#?}");
-
-    let mut desugared_module = match module.desugared() {
-        Ok(md) => md,
-        Err(e) => {
-            e.emit(&files)?;
-            return Ok(());
-        }
-    };
-
-    debug!("desugared module: {desugared_module:#?}");
-
-    desugared_module.bind_vars()?;
-
-    debug!("desugared module with variables bound: {desugared_module:#?}");
-
-    if let Err(e) = build_module(desugared_module) {
+    if let Err(e) = process_root_module(module, &args.path, &mut files) {
         e.emit(&files)?;
-        return Ok(());
-    };
-
-    info!("type checking successful");
+    }
 
     Ok(())
 }
 
-fn build_module(desugared_module: Module) -> crate::err::Result<()> {
-    let mut checked_module = Module::new();
-    checked_module.directives = desugared_module.directives;
+fn process_root_module(
+    module: sugared::Module,
+    path: &std::path::Path,
+    files: &mut SimpleFiles<String, &str>,
+) -> crate::err::Result<()> {
+    let root_mod_name = Ident::from_str("Lib");
 
-    for (path, item) in desugared_module.items {
-        item.type_check(&path, &checked_module)?;
-        item.eval_and_insert(path, &mut checked_module)?;
-    }
+    let mut desugared_module = module.desugared(&root_mod_name)?;
+
+    debug!("desugared module: {desugared_module}");
+
+    desugared_module.bind_vars();
+
+    debug!("module with variables bound: {desugared_module}");
+
+    desugared_module.load_submodules(&root_mod_name, path, files)?;
+
+    debug!("module with submodules loaded: {desugared_module}");
+
+    desugared_module.topological_sort()?;
+
+    debug!("module with items topologically sorted: {desugared_module}");
+
+    desugared_module.type_check_root()?;
+
+    info!("type checking successful");
 
     Ok(())
 }

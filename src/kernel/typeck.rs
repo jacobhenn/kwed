@@ -2,15 +2,15 @@ use std::{cmp, collections::HashSet, iter, rc::Rc};
 
 use crate::{
     ast::{
-        desugared::{BindingParam, Expr, Item, Module, Param},
-        sugared, Directives, Ident, Path,
+        desugared::{BindingParam, Expr, Item, Module},
+        Directives, Ident, Path,
     },
     bail,
     err::Result,
     kernel::context::Context,
 };
 
-use tracing::{debug, instrument, trace};
+use tracing::{instrument, trace};
 
 use uuid::Uuid;
 
@@ -53,10 +53,11 @@ fn elim_ty(
 
     // ...and then an element of the inductive type itself...
     let family_last_param = BindingParam::blank(
-        iter::chain(res_params.clone(), family_params.clone())
-            .fold(Expr::path(ind_def_path.clone(), None), |acc, par| {
-                Expr::fn_app(acc, par.to_var(), None)
-            }),
+        ind_def_path
+            .clone()
+            .to_expr()
+            .with_args(res_params.iter().cloned().map(BindingParam::to_var))
+            .with_args(family_params.iter().cloned().map(BindingParam::to_var)),
     );
     family_params.push(family_last_param);
 
@@ -70,11 +71,7 @@ fn elim_ty(
         panic!("type of inductive def should be valid");
     };
 
-    let family_ty = family_params
-        .into_iter()
-        .rfold(Expr::type_type(*ind_def_level + 1, None), |acc, par| {
-            Expr::fn_type(par, acc, None)
-        });
+    let family_ty = Expr::type_type(*ind_def_level + 1).with_fn_ty_params(family_params);
 
     let family_param = BindingParam::new(Ident::from_str("family"), family_ty);
 
@@ -101,11 +98,7 @@ fn elim_ty(
 
             family_args.push(arm_param.clone().to_var());
 
-            let rec_par_ty = family_args
-                .into_iter()
-                .fold(family_param.clone().to_var(), |acc, arg| {
-                    Expr::fn_app(acc, arg, None)
-                });
+            let rec_par_ty = family_param.clone().to_var().with_args(family_args);
 
             let rec_par_name = Ident::new(format!("{}_rec", arm_param.name.name));
 
@@ -133,23 +126,13 @@ fn elim_ty(
                 .map(BindingParam::to_var)
                 .collect();
 
-        let family_last_arg = constructor_args
-            .into_iter()
-            .fold(Expr::path(constructor_path, None), |acc, arg| {
-                Expr::fn_app(acc, arg, None)
-            });
+        let family_last_arg = constructor_path.to_expr().with_args(constructor_args);
 
         family_args.push(family_last_arg);
 
-        let arm_cod = family_args
-            .into_iter()
-            .fold(family_param.clone().to_var(), |acc, arg| {
-                Expr::fn_app(acc, arg, None)
-            });
+        let arm_cod = family_param.clone().to_var().with_args(family_args);
 
-        let arm_ty = arm_params
-            .into_iter()
-            .rfold(arm_cod, |acc, param| Expr::fn_type(param, acc, None));
+        let arm_ty = arm_cod.with_fn_ty_params(arm_params);
 
         let arm_name = Ident::new(format!("{constructor_name}_case"));
 
@@ -158,12 +141,11 @@ fn elim_ty(
 
     // Finally, `elim` takes a scrutinee, including the appropriate index parameters...
     let scrutinee_idx_params = ind_def_ty.fn_ty_params().into_iter().cloned();
-    let scrutinee_final_param_ty = iter::chain(ind_def_params, ind_def_ty.fn_ty_params())
-        .cloned()
-        .map(BindingParam::to_var)
-        .fold(Expr::path(ind_def_path, None), |acc, arg| {
-            Expr::fn_app(acc, arg, None)
-        });
+    let scrutinee_final_param_ty = ind_def_path.to_expr().with_args(
+        iter::chain(ind_def_params, ind_def_ty.fn_ty_params())
+            .cloned()
+            .map(BindingParam::to_var),
+    );
     let scrutinee_final_param = BindingParam::blank(scrutinee_final_param_ty);
 
     res_params.extend(scrutinee_idx_params.clone());
@@ -174,16 +156,10 @@ fn elim_ty(
     let res_cod_final_arg = scrutinee_final_param.to_var();
     res_cod_args.push(res_cod_final_arg);
 
-    let res_cod = res_cod_args
-        .into_iter()
-        .fold(family_param.to_var(), |acc, arg| {
-            Expr::fn_app(acc, arg, None)
-        });
+    let res_cod = family_param.to_var().with_args(res_cod_args);
 
     // TODO: do I need to evaluate this before returning it?
-    let res = res_params
-        .into_iter()
-        .rfold(res_cod, |acc, par| Expr::fn_type(par, acc, None));
+    let res = res_cod.with_fn_ty_params(res_params);
 
     trace!("ret: {res}");
 
@@ -334,45 +310,44 @@ impl Expr {
             bail!(None, "max recursion depth ({max_depth}) exceeded");
         }
 
-        use Expr::*;
         let res = match self {
-            TypeType { level, .. } => TypeType {
+            Self::TypeType { level, .. } => Self::TypeType {
                 level: level + 1,
                 span: None,
             },
-            Displace { amount, arg, .. } => {
+            Self::Displace { amount, arg, .. } => {
                 let mut ty = arg.ty(md, ctx, depth + 1)?;
                 ty.displace_ty(*amount);
                 ty
             }
-            Var { id, span, .. } => {
+            Self::Var { id, span, .. } => {
                 let Some(ty) = ctx.ty_of_var(*id) else {
                     bail!(span.clone(), "INTERNAL ERROR: unbound variable `{self}`")
                 };
                 ty.clone()
             }
-            Path { path, span } => {
-                if let Some(item) = md.items.get(path) {
-                    item.ty()
+            Self::Path { path, span } => {
+                if let Some(item) = md.items.get(path)
+                    && let Some(ty) = item.ty()
+                {
+                    ty
                 } else if let parent = path.clone().parent()
                     && let Some(Item::Inductive {
                         params,
                         ty,
                         constructors,
+                        ..
                     }) = md.items.get(&parent)
                 {
                     let last_component = path.components.last().expect("paths are non-empty");
 
                     if last_component.name == "elim" {
-                        elim_ty(parent, params, ty, constructors)
+                        elim_ty(parent, &params, &ty, &constructors)
                     } else if let Some((_name, ty)) = constructors
                         .iter()
                         .find(|(name, _ty)| name == last_component)
                     {
-                        params
-                            .iter()
-                            .cloned()
-                            .rfold(ty.clone(), |acc, par| Expr::fn_type(par, acc, None))
+                        ty.clone().with_fn_ty_params(params.iter().cloned())
                     } else {
                         bail!(span.clone(), "cannot find item `{path}` in this scope")
                     }
@@ -384,8 +359,7 @@ impl Expr {
                     bail!(span.clone(), "cannot find item `{path}` in this scope")
                 }
             }
-
-            Fn { param, body, .. } => {
+            Self::Fn { param, body, .. } => {
                 param.ty.expect_ty_ty(md, ctx, depth + 1)?;
 
                 let mut cod = body.ty(
@@ -404,7 +378,7 @@ impl Expr {
                 body.substitute(param.id, &new_var);
                 cod.substitute(param.id, &new_var);
 
-                FnType {
+                Self::FnType {
                     param: Rc::new(BindingParam {
                         id: new_id,
                         ..(**param).clone()
@@ -413,23 +387,26 @@ impl Expr {
                     span: None,
                 }
             }
-            FnType { param, cod, .. } => {
+            Self::FnType { param, cod, .. } => {
                 let param_level = param.ty.expect_ty_ty(md, ctx, depth + 1)?;
 
                 let ctx = ctx.clone().with_var(param.id, param.ty.clone());
                 let cod_level = cod.expect_ty_ty(md, &ctx, depth + 1)?;
 
-                TypeType {
+                Self::TypeType {
                     level: cmp::max(param_level, cod_level),
                     span: None,
                 }
             }
-            FnApp { func, arg, .. } => {
+            Self::FnApp { func, arg, .. } => {
                 let mut func_type = func.ty(md, ctx, depth + 1)?;
                 func_type.eval(md, ctx, 0)?;
 
-                let FnType { param, mut cod, .. } = func_type else {
-                    bail!(func.span(), "expected function, found `{func_type}`");
+                let Self::FnType { param, mut cod, .. } = func_type else {
+                    bail!(
+                        func.span(), "expected function, found `{func_type}`";
+                        arg.span(), "non-function expression is applied to this argument"
+                    );
                 };
 
                 arg.expect_ty(&param.ty, md, ctx, depth + 1)?;
@@ -457,34 +434,27 @@ fn expect_valid_inductive_def_ty(ty: &Expr) -> Result<()> {
 }
 
 impl Item {
-    pub fn ty(&self) -> Expr {
+    pub fn ty(&self) -> Option<Expr> {
         match self {
-            Item::Def { ty, .. } | Item::Axiom { ty } => ty.clone(),
-            Item::Inductive { params, ty, .. } => params
-                .iter()
-                .rfold(ty.clone(), |cod, par| Expr::fn_type(par.clone(), cod, None)),
+            Item::Def { ty, .. } | Item::Axiom { ty, .. } => Some(ty.clone()),
+            Item::Inductive { params, ty, .. } => {
+                Some(ty.clone().with_fn_ty_params(params.iter().cloned()))
+            }
         }
     }
 
     #[instrument(level = "trace", skip(self, md), fields(self = %self, path = %path))]
     pub fn type_check(&self, path: &Path, md: &Module) -> Result<()> {
-        let last_component = path.components.last().expect("paths are non-empty");
-        if last_component.name == "elim" {
-            bail!(
-                last_component.span.clone(),
-                "`elim` is a reserved name in this position"
-            );
-        }
-
         match self {
-            Item::Def { ty, val } => val.expect_ty(ty, md, &Context::Empty, 0)?,
-            Item::Axiom { ty } => {
+            Item::Def { ty, val, .. } => val.expect_ty(ty, md, &Context::Empty, 0)?,
+            Item::Axiom { ty, .. } => {
                 ty.expect_ty_ty(md, &Context::Empty, 0)?;
             }
             Item::Inductive {
                 params,
                 ty,
                 constructors,
+                ..
             } => {
                 let mut ctx = Context::Empty;
                 for param in params {
@@ -499,7 +469,7 @@ impl Item {
                 let ctx = Context::ThisInductive {
                     outer: Rc::new(ctx),
                     path: path.clone(),
-                    ty: self.ty(),
+                    ty: self.ty().expect("inductive definitions should have a type"),
                 };
 
                 for (cons_name, cons_ty) in constructors {
@@ -508,22 +478,38 @@ impl Item {
                     if cons_ty_level > ty_level - 1 {
                         bail!(
                             cons_ty.span(),
-                            "Size conflict: constructor `{cons_name}` exists at level `Type {cons_ty_level}`, but inductive type `{path}` exists at level `Type {}`", ty_level - 1;
-                            path.span(),
-                            "This exists at level `Type {}`", ty_level - 1
+                            "size conflict: constructor `{cons_name}` exists at level `Type {cons_ty_level}`, but inductive type `{path}` exists at level `Type {}`", ty_level - 1;
+                            path.span().clone(),
+                            "this exists at level `Type {}`", ty_level - 1
                         );
                     }
 
                     if !cons_ty.root_cod().head().is_path_to(path) {
                         bail!(
                             cons_ty.root_cod().span(),
-                            "Constructor for `{path}` does not return `{path}`"
+                            "constructor for `{path}` does not return `{path}`"
                         );
                     }
 
                     // TODO: positivity checking
                 }
             }
+        }
+
+        Ok(())
+    }
+}
+
+impl Module {
+    pub fn type_check_root(self) -> Result<()> {
+        let mut checked_module = Module::new();
+        checked_module.directives = self.directives;
+
+        for (path, mut item) in self.items {
+            item.type_check(&path, &checked_module)?;
+            item.eval(&mut checked_module)?;
+
+            checked_module.items.insert(path, item);
         }
 
         Ok(())

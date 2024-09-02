@@ -1,0 +1,4 @@
+// The type with one element.
+inductive Unit: Type {
+    0: Unit,
+}

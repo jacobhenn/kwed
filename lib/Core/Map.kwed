@@ -1,0 +1,6 @@
+struct Iff(A B: Type) {
+    only-if: A → B,
+    if: B → A,
+}
+
+def ↔: (A B: Type) → Type { Iff }

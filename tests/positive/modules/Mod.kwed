@@ -1,0 +1,6 @@
+mod { Core, Eq, Nat }
+
+notation number-0 { Nat.ℕ.0 }
+notation number-suc { Nat.ℕ.suc }
+
+def 3=3: Eq.= Nat.ℕ 3 3 { Eq.=.refl Nat.ℕ 3 }

@@ -1,0 +1,5 @@
+inductive False: Type {}
+
+inductive Unit: Type {
+	0: Unit,
+}

@@ -98,24 +98,10 @@ impl Param {
             .or_not()
             .map(|names| names.unwrap_or(vec![Ident::blank()]))
             .then(expr)
-            .map(|(names, ty)| Self { names, ty })
-            .labelled("parameter")
-            .debug("parameter")
-    }
-
-    pub fn parse_single<'a>(
-        file_id: usize,
-        expr: impl Parser<char, Expr, Error = Simple<char>> + 'a,
-    ) -> impl Parser<char, Self, Error = Simple<char>> + 'a {
-        Ident::parse(file_id)
-            .padded_by(pad())
-            .then_ignore(just(':').padded_by(pad()))
-            .or_not()
-            .map(|name| name.unwrap_or_else(Ident::blank))
-            .then(expr)
-            .map(|(name, ty)| Self {
-                names: vec![name],
+            .map_with_span(move |(names, ty), range| Self {
+                names,
                 ty,
+                span: Span::new(file_id, range),
             })
             .labelled("parameter")
             .debug("parameter")
@@ -128,18 +114,6 @@ impl Params {
         expr: impl Parser<char, Expr, Error = Simple<char>> + 'a,
     ) -> impl Parser<char, Self, Error = Simple<char>> + 'a {
         Param::parse(file_id, expr)
-            .separated_by(just(',').padded_by(pad()))
-            .allow_trailing()
-            .map(Params)
-            .labelled("parameter list")
-            .debug("parameter list")
-    }
-
-    pub fn parse_singles<'a>(
-        file_id: usize,
-        expr: impl Parser<char, Expr, Error = Simple<char>> + 'a,
-    ) -> impl Parser<char, Self, Error = Simple<char>> + 'a {
-        Param::parse_single(file_id, expr)
             .separated_by(just(',').padded_by(pad()))
             .allow_trailing()
             .map(Params)
@@ -173,9 +147,9 @@ impl Item {
                     .map(Some)
                     .recover_with(nested_delimiters('{', '}', [], |_| None)),
             )
-            .map(|(((name, params), ty), constructors)| {
+            .map(|(((path, params), ty), constructors)| {
                 (
-                    name,
+                    path,
                     Self::Inductive {
                         params: params.unwrap_or_else(Params::default),
                         ty,
@@ -193,7 +167,7 @@ impl Item {
             .then_ignore(just(':').padded_by(pad()))
             .then(Expr::parse(file_id).padded_by(pad()))
             .then_ignore(just(';'))
-            .map(|(name, ty)| (name, Self::Axiom { ty }))
+            .map(|(path, ty)| (path, Self::Axiom { ty }))
     }
 
     pub fn parse_def(file_id: usize) -> impl Parser<char, (Path, Self), Error = Simple<char>> {
@@ -213,9 +187,9 @@ impl Item {
                     .delimited_by(just('{'), just('}'))
                     .recover_with(nested_delimiters('{', '}', [], |_| Expr::Error)),
             )
-            .map(|(((name, args), ty), val)| {
+            .map(|(((path, args), ty), val)| {
                 (
-                    name,
+                    path,
                     Self::Def {
                         args: args.unwrap_or_default(),
                         ty,
@@ -225,6 +199,41 @@ impl Item {
             })
             .labelled("definition")
             .debug("definition")
+    }
+
+    pub fn parse_struct(file_id: usize) -> impl Parser<char, (Path, Self), Error = Simple<char>> {
+        text::keyword("struct")
+            .ignore_then(Path::parse(file_id).padded_by(pad()))
+            .then(
+                Params::parse(file_id, Expr::parse(file_id))
+                    .padded_by(pad())
+                    .delimited_by(just('('), just(')'))
+                    .or_not(),
+            )
+            .then_ignore(just(':').padded_by(pad()))
+            .then(Expr::parse(file_id).padded_by(pad()))
+            .padded_by(pad())
+            .then(
+                Ident::parse(file_id)
+                    .then_ignore(just(':').padded_by(pad()))
+                    .then(Expr::parse(file_id).padded_by(pad()))
+                    .separated_by(just(',').padded_by(pad()))
+                    .allow_trailing()
+                    .padded_by(pad())
+                    .delimited_by(just('{'), just('}'))
+                    .map(Some)
+                    .recover_with(nested_delimiters('{', '}', [], |_| None)),
+            )
+            .map(|(((path, params), ty), fields)| {
+                (
+                    path,
+                    Self::Struct {
+                        params: params.unwrap_or_else(Params::default),
+                        ty,
+                        fields,
+                    },
+                )
+            })
     }
 
     pub fn parse(file_id: usize) -> impl Parser<char, (Path, Self), Error = Simple<char>> {
@@ -312,9 +321,11 @@ impl Expr {
             .padded_by(pad())
             .delimited_by(just('('), just(')'))
             .or(Expr::parse_atomic(file_id, expr.clone()).map(|ty| {
+                let span = ty.span();
                 Params(vec![Param {
                     names: vec![Ident::blank()],
                     ty,
+                    span,
                 }])
             }))
             .then_ignore(just("→").padded_by(pad()))
@@ -412,6 +423,26 @@ impl Directives {
 }
 
 impl Module {
+    fn parse_submodules(file_id: usize) -> impl Parser<char, Vec<Ident>, Error = Simple<char>> {
+        text::keyword("mod").padded_by(pad()).ignore_then(
+            Ident::parse(file_id)
+                .padded_by(pad())
+                .separated_by(just(',').padded_by(pad()))
+                .allow_trailing()
+                .delimited_by(just('{'), just('}')),
+        )
+    }
+
+    fn parse_imports(file_id: usize) -> impl Parser<char, Vec<Path>, Error = Simple<char>> {
+        text::keyword("use").padded_by(pad()).ignore_then(
+            Path::parse(file_id)
+                .padded_by(pad())
+                .separated_by(just(',').padded_by(pad()))
+                .allow_trailing()
+                .delimited_by(just('{'), just('}')),
+        )
+    }
+
     fn parse_notation(
         file_id: usize,
     ) -> impl Parser<char, HashMap<String, Expr>, Error = Simple<char>> {
@@ -430,14 +461,20 @@ impl Module {
     pub fn parse_final(file_id: usize) -> impl Parser<char, Self, Error = Simple<char>> {
         Directives::parse()
             .or_not()
-            .then(Self::parse_notation(file_id))
+            .then(Self::parse_submodules(file_id).padded_by(pad()).or_not())
+            .then(Self::parse_imports(file_id).padded_by(pad()).or_not())
+            .then(Self::parse_notation(file_id).padded_by(pad()))
             .then(Item::parse(file_id).padded_by(pad()).repeated())
             .then_ignore(end())
-            .map(|((directives, notation), items)| Self {
-                directives: directives.unwrap_or_default(),
-                notation,
-                items: items.into_iter().collect(),
-            })
+            .map(
+                |((((directives, submodules), imports), notation), items)| Self {
+                    directives: directives.unwrap_or_default(),
+                    submodules: submodules.unwrap_or_else(Vec::new),
+                    imports: imports.unwrap_or_else(Vec::new),
+                    notation,
+                    items: items.into_iter().collect(),
+                },
+            )
     }
 }
 
@@ -474,5 +511,33 @@ fn test_displace_parse() {
             .then_ignore(end())
             .parse("↑ 1 meow"),
         Ok(..)
+    );
+}
+
+#[test]
+fn test_parse_submodules() {
+    assert_matches!(
+        Module::parse_submodules(0)
+            .then_ignore(end())
+            .parse("mod { Core } "),
+        Ok(..)
+    );
+    assert_matches!(
+        Module::parse_submodules(0)
+            .then_ignore(end())
+            .parse("mod { Core, Nat }"),
+        Ok(..)
+    );
+    assert_matches!(
+        Module::parse_submodules(0)
+            .then_ignore(end())
+            .parse("mod { }"),
+        Err(..)
+    );
+    assert_matches!(
+        Module::parse_submodules(0)
+            .then_ignore(end())
+            .parse("mod { Core,, Nat }"),
+        Err(..)
     );
 }

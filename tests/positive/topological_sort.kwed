@@ -1,0 +1,5 @@
+def A: Type 1 { B }
+
+def C: Type 1 { Type }
+
+def B: Type 1 { C }

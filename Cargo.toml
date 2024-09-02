@@ -19,3 +19,4 @@ base64 = "0.22.1"
 unicode-xid = "0.2.4"
 serde = { version = "1.0.208", features = ["derive"] }
 ron = "0.8.1"
+clap = { version = "4.5.16", features = ["derive"] }

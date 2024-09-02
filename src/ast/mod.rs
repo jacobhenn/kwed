@@ -4,9 +4,10 @@ pub mod sugared;
 
 pub mod desugared;
 
-use std::{fmt::Display, ops::Range, path::PathBuf};
+use std::{cmp, fmt::Display, ops::Range};
 
 use base64::prelude::*;
+use tracing::instrument;
 use uuid::Uuid;
 
 #[derive(PartialEq, Eq, Debug, Hash, Clone, Default)]
@@ -67,9 +68,31 @@ impl Span {
     pub fn new(file_id: usize, range: Range<usize>) -> Self {
         Self { file_id, range }
     }
+
+    pub fn hull_opts(lhs: Option<Self>, rhs: Option<Self>) -> Option<Self> {
+        let (lhs, rhs) = (lhs?, rhs?);
+
+        (lhs.file_id == rhs.file_id).then(|| Span {
+            file_id: lhs.file_id,
+            range: cmp::min(lhs.range.start, rhs.range.start)
+                ..cmp::max(lhs.range.end, rhs.range.end),
+        })
+    }
+
+    pub fn hull(lhs: Self, rhs: Self) -> Option<Self> {
+        Self::hull_opts(Some(lhs), Some(rhs))
+    }
 }
 
 impl Path {
+    pub fn new(components: Vec<Ident>) -> Self {
+        Self { components }
+    }
+
+    pub fn to_expr(self) -> desugared::Expr {
+        self.into()
+    }
+
     pub fn parent(self) -> Self {
         let [parent_components @ .., _] = &self.components[..] else {
             panic!("paths should not be empty");
@@ -100,6 +123,38 @@ impl Path {
             None
         }
     }
+
+    pub fn with_prefix(mut self, prefix: Ident) -> Self {
+        self.components.insert(0, prefix);
+        self
+    }
+
+    pub fn with_suffix(mut self, suffix: Ident) -> Self {
+        self.components.push(suffix);
+        self
+    }
+
+    #[instrument(level = "trace", skip_all, fields(self = %self, mod_name = %mod_name), ret)]
+    pub fn resolved_in(mut self, mod_name: &Ident) -> Self {
+        match self.first_component().name.as_str() {
+            "Lib" => self,
+            "Super" => {
+                self.components.remove(0);
+                if mod_name.name == "Lib" {
+                    self.components.insert(0, mod_name.clone());
+                }
+                self
+            }
+            _ => self.with_prefix(mod_name.clone()),
+        }
+    }
+}
+
+impl From<Path> for desugared::Expr {
+    fn from(path: Path) -> Self {
+        let span = path.span();
+        Self::Path { path, span }
+    }
 }
 
 impl Display for Ident {
@@ -122,7 +177,7 @@ impl Display for Path {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, serde::Deserialize)]
+#[derive(Debug, PartialEq, Eq, Clone, serde::Deserialize)]
 #[serde(default)]
 pub struct Directives {
     pub type_in_type: bool,

@@ -18,11 +18,6 @@ pub enum Context {
         id: Uuid,
         ty: Expr,
     },
-    Rec {
-        outer: Rc<Self>,
-        id: Uuid,
-        ty: Expr,
-    },
     ThisInductive {
         outer: Rc<Self>,
         path: Path,
@@ -35,9 +30,6 @@ impl Display for Context {
         match self {
             Context::Empty => Ok(()),
             Context::Var { outer, id, .. } => write!(f, "{outer} {}", "●".with(uuid_color(*id))),
-            Context::Rec { outer, id, .. } => {
-                write!(f, "{outer} rec{{{}}}", "●".with(uuid_color(*id)))
-            }
             Context::ThisInductive { outer, path, .. } => write!(f, "{outer} {{inductive {path}}}"),
         }
     }
@@ -62,25 +54,7 @@ impl Context {
                     outer.ty_of_var(search_id)
                 }
             }
-            Self::ThisInductive { outer, .. } | Self::Rec { outer, .. } => {
-                outer.ty_of_var(search_id)
-            }
-        }
-    }
-
-    pub fn ty_of_rec_var(&self, search_id: Uuid) -> Option<&Expr> {
-        match self {
-            Self::Empty => None,
-            Self::Rec { outer, id, ty } => {
-                if *id == search_id {
-                    Some(ty)
-                } else {
-                    outer.ty_of_var(search_id)
-                }
-            }
-            Self::Var { outer, .. } | Self::ThisInductive { outer, .. } => {
-                outer.ty_of_rec_var(search_id)
-            }
+            Self::ThisInductive { outer, .. } => outer.ty_of_var(search_id),
         }
     }
 
@@ -89,7 +63,7 @@ impl Context {
         match self {
             Self::Empty => None,
             Self::ThisInductive { path, ty, .. } => Some((path, ty)),
-            Self::Var { outer, .. } | Self::Rec { outer, .. } => outer.this_inductive(),
+            Self::Var { outer, .. } => outer.this_inductive(),
         }
     }
 }
