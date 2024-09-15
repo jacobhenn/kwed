@@ -12,7 +12,8 @@ use codespan_reporting::files::SimpleFiles;
 use indexmap::IndexMap;
 
 use tracing::{debug, instrument};
-use uuid::Uuid;
+
+use ulid::Ulid;
 
 const FORBIDDEN_NAMES: &[&str] = &["Super", "Lib"];
 
@@ -97,7 +98,7 @@ impl Arm {
             cons_args: self
                 .cons_args
                 .into_iter()
-                .map(|name| (name, Uuid::new_v4()))
+                .map(|name| (name, Ulid::new()))
                 .collect(),
             body: self.body.desugared(not, mod_name)?,
         })
@@ -205,7 +206,7 @@ impl Expr {
                 arg: Rc::new(arg.desugared(not, mod_name)?),
                 cod_pars: cod_pars
                     .into_iter()
-                    .map(|name| (name, Uuid::new_v4()))
+                    .map(|name| (name, Ulid::new()))
                     .collect(),
                 cod_body: Rc::new(cod_body.desugared(not, mod_name)?),
                 arms: arms
@@ -215,7 +216,7 @@ impl Expr {
                 span: Some(span),
             },
             Expr::Rec { arg_name, span } => desugared::Expr::Rec {
-                arg_id: Uuid::nil(),
+                arg_id: Ulid::nil(),
                 arg_name,
                 span: Some(span),
             },
@@ -281,7 +282,8 @@ fn desugar_struct(
     let mut ret = vec![(path, ind_def)];
 
     let mut getter_params = desugared_params;
-    let getter_final_param_id = Uuid::new_v4();
+
+    let getter_final_param_id = Ulid::new_v4();
     getter_params.push(
         BindingParam::blank(
             path.clone()

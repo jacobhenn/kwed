@@ -11,7 +11,7 @@ use indexmap::IndexMap;
 
 use tracing::{debug, instrument, trace};
 
-use uuid::Uuid;
+use ulid::Ulid;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
@@ -29,7 +29,7 @@ pub enum Expr {
     // TODO: `Var` and `Path` may not need to store a span, since they are already stored in their
     // contents.
     Var {
-        id: Uuid,
+        id: Ulid,
         name: Ident,
         span: Option<Span>,
     },
@@ -56,13 +56,13 @@ pub enum Expr {
 
     Match {
         arg: Rc<Self>,
-        cod_pars: Vec<(Ident, Uuid)>,
+        cod_pars: Vec<(Ident, Ulid)>,
         cod_body: Rc<Self>,
         arms: Vec<Arm>,
         span: Option<Span>,
     },
     Rec {
-        arg_id: Uuid,
+        arg_id: Ulid,
         arg_name: Ident,
         span: Option<Span>,
     },
@@ -78,7 +78,7 @@ pub struct Param {
 #[derive(Debug, Clone, PartialEq)]
 pub struct BindingParam {
     pub name: Ident,
-    pub id: Uuid,
+    pub id: Ulid,
     pub ty: Expr,
     pub span: Option<Span>,
 }
@@ -87,18 +87,18 @@ impl BindingParam {
     pub fn new(name: Ident, ty: Expr) -> Self {
         Self {
             name,
-            id: Uuid::new_v4(),
+            id: Ulid::new(),
             ty,
             span: None,
         }
     }
 
-    pub fn with_id(self, id: Uuid) -> Self {
+    pub fn with_id(self, id: Ulid) -> Self {
         Self { id, ..self }
     }
 
     pub fn blank(ty: Expr) -> Self {
-        let id = Uuid::new_v4();
+        let id = Ulid::new();
 
         Self {
             name: Ident::blank(),
@@ -117,7 +117,7 @@ impl Param {
     pub fn binding(self) -> BindingParam {
         BindingParam {
             name: self.name,
-            id: Uuid::new_v4(),
+            id: Ulid::new(),
             ty: self.ty,
             span: self.span,
         }
@@ -127,7 +127,7 @@ impl Param {
 #[derive(Debug, PartialEq, Clone)]
 pub struct Arm {
     pub constructor: Ident,
-    pub cons_args: Vec<(Ident, Uuid)>,
+    pub cons_args: Vec<(Ident, Ulid)>,
     pub body: Expr,
 }
 
@@ -154,11 +154,11 @@ pub struct Module {
     pub items: IndexMap<Path, Item>,
 }
 
-pub(crate) fn uuid_color(id: Uuid) -> Color {
+pub(crate) fn ulid_color(id: Ulid) -> Color {
     Color::Rgb {
-        r: id.as_bytes()[0],
-        g: id.as_bytes()[1],
-        b: id.as_bytes()[2],
+        r: id.to_bytes()[7],
+        g: id.to_bytes()[8],
+        b: id.to_bytes()[9],
     }
 }
 
@@ -168,7 +168,7 @@ impl Display for Expr {
             Expr::TypeType { level, .. } => write!(f, "Type {level}")?,
             Expr::Displace { amount, arg, .. } => write!(f, "↑ {amount} {arg}")?,
             Expr::Var { id, name, .. } => {
-                write!(f, "{}", name.name.as_str().with(uuid_color(*id)))?
+                write!(f, "{}", name.name.as_str().with(ulid_color(*id)))?
             }
             // TODO: maybe do something fancy here to write just enough components to disambiguate
             Expr::Path { path, .. } => {
@@ -181,13 +181,13 @@ impl Display for Expr {
             Expr::Fn { param, body, .. } => write!(
                 f,
                 "[{}: {}] {body}",
-                param.name.name.as_str().with(uuid_color(param.id)),
+                param.name.name.as_str().with(ulid_color(param.id)),
                 param.ty,
             )?,
             Expr::FnType { param, cod, .. } => write!(
                 f,
                 "({}: {}) → {cod}",
-                param.name.name.as_str().with(uuid_color(param.id)),
+                param.name.name.as_str().with(ulid_color(param.id)),
                 param.ty
             )?,
             Expr::FnApp { .. } => {
@@ -209,7 +209,7 @@ impl Display for Expr {
                 "match {arg} to [{}] {cod_body} {{ {} }}",
                 cod_pars
                     .iter()
-                    .map(|(name, id)| name.name.as_str().with(uuid_color(*id)).to_string())
+                    .map(|(name, id)| name.name.as_str().with(ulid_color(*id)).to_string())
                     .intersperse(" ".to_string())
                     .collect::<String>(),
                 arms.iter()
@@ -222,7 +222,7 @@ impl Display for Expr {
             } => write!(
                 f,
                 "rec {}",
-                arg_name.name.as_str().with(uuid_color(*arg_id))
+                arg_name.name.as_str().with(ulid_color(*arg_id))
             )?,
         };
 
@@ -252,7 +252,7 @@ impl Display for Arm {
             self.constructor,
             self.cons_args
                 .iter()
-                .map(|(name, id)| name.name.as_str().with(uuid_color(*id)).to_string())
+                .map(|(name, id)| name.name.as_str().with(ulid_color(*id)).to_string())
                 .intersperse(" ".to_string())
                 .collect::<String>(),
             self.body,
@@ -310,7 +310,7 @@ impl Expr {
         Self::TypeType { level, span: None }
     }
 
-    pub fn var(id: Uuid, name: Ident) -> Self {
+    pub fn var(id: Ulid, name: Ident) -> Self {
         Self::Var {
             id,
             name,
@@ -518,7 +518,7 @@ impl Expr {
         }
     }
 
-    pub fn is_var_with_id(&self, desired_id: Uuid) -> bool {
+    pub fn is_var_with_id(&self, desired_id: Ulid) -> bool {
         match self {
             Self::Var { id, .. } => *id == desired_id,
             _ => false,

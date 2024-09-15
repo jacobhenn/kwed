@@ -9,10 +9,10 @@ use crate::{
 
 use tracing::{instrument, trace};
 
-use uuid::Uuid;
+use ulid::Ulid;
 
 impl Expr {
-    pub fn substitute(&mut self, target_id: Uuid, sub: &Expr) {
+    pub fn substitute(&mut self, target_id: Ulid, sub: &Expr) {
         match self {
             Expr::TypeType { .. } | Expr::Rec { .. } => (),
             Expr::Displace { arg, .. } => Rc::make_mut(arg).substitute(target_id, sub),
@@ -51,7 +51,7 @@ impl Expr {
 
     pub fn substitute_many<'a>(
         &mut self,
-        target_ids: impl IntoIterator<Item = Uuid>,
+        target_ids: impl IntoIterator<Item = Ulid>,
         subs: impl IntoIterator<Item = &'a Expr>,
     ) {
         for (target_id, sub) in iter::zip(target_ids, subs) {
@@ -59,14 +59,14 @@ impl Expr {
         }
     }
 
-    pub fn with_substitution(mut self, target_id: Uuid, expr: Expr) -> Self {
+    pub fn with_substitution(mut self, target_id: Ulid, expr: Expr) -> Self {
         self.substitute(target_id, &expr);
         self
     }
 
     pub fn with_substitutions(
         mut self,
-        target_ids: impl IntoIterator<Item = Uuid>,
+        target_ids: impl IntoIterator<Item = Ulid>,
         subs: impl IntoIterator<Item = Expr>,
     ) -> Self {
         for (target_id, sub) in iter::zip(target_ids, subs) {
@@ -76,7 +76,7 @@ impl Expr {
     }
 
     // TODO: replace this with a more general method like `any_subexpr`
-    pub fn contains_var(&self, search_id: Uuid) -> bool {
+    pub fn contains_var(&self, search_id: Ulid) -> bool {
         match self {
             Expr::TypeType { .. } | Expr::Path { .. } | Expr::Rec { .. } => false,
             Expr::Displace { arg, .. } => arg.contains_var(search_id),

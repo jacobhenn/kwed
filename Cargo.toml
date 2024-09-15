@@ -10,7 +10,6 @@ anyhow = "1.0"
 codespan-reporting = "0.11"
 logos2 = "0.13"
 chumsky = "0.9"
-uuid = { version = "1.7.0", features = ["v4", "macro-diagnostics"] }
 indexmap = "2.2.6"
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "fmt"] }
@@ -20,3 +19,4 @@ unicode-xid = "0.2.4"
 serde = { version = "1.0.208", features = ["derive"] }
 ron = "0.8.1"
 clap = { version = "4.5.16", features = ["derive"] }
+ulid = "1.1.3"

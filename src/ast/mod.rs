@@ -8,7 +8,7 @@ use std::{cmp, fmt::Display, ops::Range};
 
 use base64::prelude::*;
 use tracing::{instrument, trace};
-use uuid::Uuid;
+use ulid::Ulid;
 
 #[derive(PartialEq, Eq, Debug, Hash, Clone, Default)]
 pub struct Span {
@@ -48,8 +48,8 @@ impl Ident {
         Self::from_str("●")
     }
 
-    pub fn from_id(id: Uuid) -> Self {
-        let encoded = BASE64_STANDARD.encode(&id.as_bytes()[..3]);
+    pub fn from_id(id: Ulid) -> Self {
+        let encoded = BASE64_STANDARD.encode(&id.to_bytes()[..3]);
 
         Self::new(encoded)
     }

@@ -5,7 +5,7 @@ use super::{
 
 use std::rc::Rc;
 
-use uuid::Uuid;
+use ulid::Ulid;
 
 // TODO: change to Rc instead of Box would make it a little nicer
 #[derive(Debug, Clone)]
@@ -14,12 +14,12 @@ enum Context {
     Var {
         outer: Box<Self>,
         name: Ident,
-        id: Uuid,
+        id: Ulid,
     },
 }
 
 impl Context {
-    fn id(&self, search_name: &Ident) -> Option<Uuid> {
+    fn id(&self, search_name: &Ident) -> Option<Ulid> {
         match self {
             Context::Empty => None,
             Context::Var { outer, name, id } => {
@@ -32,7 +32,7 @@ impl Context {
         }
     }
 
-    fn with_var(self, name: Ident, id: Uuid) -> Self {
+    fn with_var(self, name: Ident, id: Ulid) -> Self {
         Self::Var {
             outer: Box::new(self),
             name,
@@ -40,7 +40,7 @@ impl Context {
         }
     }
 
-    fn with_vars(self, vars: impl IntoIterator<Item = (Ident, Uuid)>) -> Self {
+    fn with_vars(self, vars: impl IntoIterator<Item = (Ident, Ulid)>) -> Self {
         vars.into_iter()
             .fold(self, |acc, (name, id)| acc.with_var(name, id))
     }
