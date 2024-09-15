@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{iter, rc::Rc};
 
 use crate::{
     ast::desugared::{Expr, Item, Module},
@@ -11,125 +11,10 @@ use tracing::{instrument, trace};
 
 use uuid::Uuid;
 
-/// Check if the given expression is ready for eliminator-constructor simplification. If so, do it.
-#[instrument(level = "trace", skip_all, fields(elim_call = %elim_call, ctx = %ctx))]
-fn try_eval_elim(elim_call: Expr, md: &Module, ctx: &Context, depth: usize) -> Option<Expr> {
-    let Expr::Path {
-        path: head_path, ..
-    } = elim_call.head()
-    else {
-        return None;
-    };
-
-    if head_path.last_component().name != "elim" {
-        return None;
-    }
-
-    let ind_def_path = head_path.clone().parent();
-
-    let Some(Item::Inductive {
-        params: ind_def_params,
-        ty: ind_def_ty,
-        constructors,
-        ..
-    }) = md.items.get(&ind_def_path)
-    else {
-        return None;
-    };
-
-    let elim_call_args = elim_call.args();
-
-    if elim_call_args.len()
-        != ind_def_params.len() + constructors.len() + ind_def_ty.fn_ty_params().len() + 2
-    {
-        trace!("potential elim-cons seems to be a subexpr of complete elim-cons; passing");
-        return None;
-    }
-
-    let cons_call = elim_call_args.last()?;
-
-    let Expr::Path {
-        path: cons_path, ..
-    } = cons_call.head()
-    else {
-        return None;
-    };
-
-    if cons_path.clone().parent() != ind_def_path {
-        return None;
-    }
-
-    let Some(cons_idx) = constructors
-        .iter()
-        .position(|(name, _ty)| name == cons_path.last_component())
-    else {
-        return None;
-    };
-
-    trace!("potential elim-cons passed all guards; simplifying");
-
-    let (_cons_name, cons_ty) = &constructors[cons_idx];
-
-    let elim_args = elim_call.args();
-
-    let matching_arm = elim_args
-        .iter()
-        .skip(ind_def_params.len() + 1)
-        .nth(cons_idx)
-        .expect("type-checked eliminator calls should have the right number of arguments");
-
-    let mut arm_args: Vec<Expr> = cons_call
-        .args()
-        .iter()
-        .skip(ind_def_params.len())
-        .map(|&arg| arg.clone())
-        .collect();
-
-    for i in recursible_param_idxs(&ind_def_path, &ind_def_params, cons_ty) {
-        let mut rec_call_args: Vec<Expr> = elim_call.args().into_iter().cloned().collect();
-
-        for _ in 0..(ind_def_ty.fn_ty_params().len() + 1) {
-            rec_call_args.pop();
-        }
-
-        let recursible_arg = cons_call
-            .args()
-            .into_iter()
-            .skip(ind_def_params.len())
-            .nth(i)
-            .expect("type-checked constructor calls should have the right number of arguments");
-
-        let recursible_arg_ty = recursible_arg
-            .ty(md, ctx, depth + 1)
-            .expect("exprs should be type-checked before they are evaluated");
-
-        let rec_call_idx_args = recursible_arg_ty
-            .args()
-            .into_iter()
-            .skip(ind_def_params.len())
-            .cloned();
-
-        rec_call_args.extend(rec_call_idx_args);
-        rec_call_args.push(recursible_arg.clone());
-
-        let rec_call = elim_call.head().clone().with_args(rec_call_args);
-
-        arm_args.push(rec_call);
-    }
-
-    let arm_call = arm_args
-        .into_iter()
-        .fold((*matching_arm).clone(), |acc, arg| acc.with_arg(arg));
-
-    trace!("arm_call: {arm_call}");
-
-    Some(arm_call)
-}
-
 impl Expr {
     pub fn substitute(&mut self, target_id: Uuid, sub: &Expr) {
         match self {
-            Expr::TypeType { .. } => (),
+            Expr::TypeType { .. } | Expr::Rec { .. } => (),
             Expr::Displace { arg, .. } => Rc::make_mut(arg).substitute(target_id, sub),
             Expr::Var { id, .. } => {
                 if *id == target_id {
@@ -149,12 +34,51 @@ impl Expr {
                 Rc::make_mut(func).substitute(target_id, sub);
                 Rc::make_mut(arg).substitute(target_id, sub);
             }
+            Expr::Match {
+                arg,
+                cod_body,
+                arms,
+                ..
+            } => {
+                Rc::make_mut(arg).substitute(target_id, sub);
+                Rc::make_mut(cod_body).substitute(target_id, sub);
+                for arm in arms {
+                    arm.body.substitute(target_id, sub);
+                }
+            }
         }
     }
 
+    pub fn substitute_many<'a>(
+        &mut self,
+        target_ids: impl IntoIterator<Item = Uuid>,
+        subs: impl IntoIterator<Item = &'a Expr>,
+    ) {
+        for (target_id, sub) in iter::zip(target_ids, subs) {
+            self.substitute(target_id, sub);
+        }
+    }
+
+    pub fn with_substitution(mut self, target_id: Uuid, expr: Expr) -> Self {
+        self.substitute(target_id, &expr);
+        self
+    }
+
+    pub fn with_substitutions(
+        mut self,
+        target_ids: impl IntoIterator<Item = Uuid>,
+        subs: impl IntoIterator<Item = Expr>,
+    ) -> Self {
+        for (target_id, sub) in iter::zip(target_ids, subs) {
+            self.substitute(target_id, &sub);
+        }
+        self
+    }
+
+    // TODO: replace this with a more general method like `any_subexpr`
     pub fn contains_var(&self, search_id: Uuid) -> bool {
         match self {
-            Expr::TypeType { .. } | Expr::Path { .. } => false,
+            Expr::TypeType { .. } | Expr::Path { .. } | Expr::Rec { .. } => false,
             Expr::Displace { arg, .. } => arg.contains_var(search_id),
             Expr::Var { id, .. } => *id == search_id,
             Expr::Fn { param, body, .. } => {
@@ -165,6 +89,16 @@ impl Expr {
             }
             Expr::FnApp { func, arg, .. } => {
                 func.contains_var(search_id) || arg.contains_var(search_id)
+            }
+            Expr::Match {
+                arg,
+                cod_body,
+                arms,
+                ..
+            } => {
+                arg.contains_var(search_id)
+                    || cod_body.contains_var(search_id)
+                    || arms.iter().any(|arm| arm.body.contains_var(search_id))
             }
         }
     }
@@ -220,11 +154,80 @@ impl Expr {
                     *self = (**body).clone();
                 } else {
                     Rc::make_mut(arg).eval(md, ctx, depth + 1)?;
+                }
+            }
+            Expr::Match {
+                ref arg, ref arms, ..
+            } => {
+                let mut evald_arg: Expr = (**arg).clone();
+                evald_arg.eval(md, ctx, depth + 1)?;
 
-                    if let Some(res) = try_eval_elim(self.clone(), md, ctx, depth + 1) {
-                        *self = res;
-                        self.eval(md, ctx, depth + 1)?;
-                    }
+                let Expr::Path {
+                    path: cons_path, ..
+                } = evald_arg.head()
+                else {
+                    return Ok(());
+                };
+
+                let ind_def_path = cons_path.clone().parent();
+                let cons_name = cons_path.last_component();
+
+                let Some(Item::Inductive {
+                    params: ind_def_params,
+                    constructors: ind_def_constructors,
+                    ..
+                }) = md.items.get(&ind_def_path)
+                else {
+                    return Ok(());
+                };
+
+                let ind_def_num_params = ind_def_params.len();
+
+                let Some((_name, cons_ty)) = ind_def_constructors
+                    .iter()
+                    .find(|(name, _ty)| name == cons_name)
+                else {
+                    return Ok(());
+                };
+
+                let Some(matching_arm) = arms.iter().find(|arm| &arm.constructor == cons_name)
+                else {
+                    return Ok(());
+                };
+
+                let mut res = matching_arm.body.clone().with_substitutions(
+                    matching_arm.cons_args.iter().map(|(_name, id)| *id),
+                    evald_arg
+                        .args()
+                        .into_iter()
+                        .skip(ind_def_num_params)
+                        .cloned(),
+                );
+
+                let mut res_ctx = ctx.clone();
+
+                for i in recursible_param_idxs(&ind_def_path, ind_def_params, cons_ty) {
+                    let (_name, rec_cons_arg_id) = &matching_arm.cons_args[i];
+
+                    let rec_call_arg = evald_arg.args()[i + ind_def_num_params].clone();
+
+                    let mut rec_val = self.clone();
+
+                    let Self::Match { arg, .. } = &mut rec_val else {
+                        unreachable!();
+                    };
+                    *arg = Rc::new(rec_call_arg);
+
+                    res_ctx = res_ctx.clone().with_rec_val(*rec_cons_arg_id, rec_val);
+                }
+
+                res.eval(md, &res_ctx, depth + 1)?;
+
+                *self = res;
+            }
+            Expr::Rec { arg_id, .. } => {
+                if let Some(rec_val) = ctx.val_of_rec(*arg_id) {
+                    *self = rec_val.clone();
                 }
             }
         }

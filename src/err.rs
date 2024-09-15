@@ -105,7 +105,8 @@ impl Error {
             .with_notes(self.notes);
 
         let writer = StandardStream::stderr(ColorChoice::Auto);
-        let config = codespan_reporting::term::Config::default();
+        let mut config = codespan_reporting::term::Config::default();
+        config.chars = codespan_reporting::term::Chars::ascii();
 
         term::emit(&mut writer.lock(), &config, files, &diagnostic)?;
 
@@ -173,7 +174,8 @@ pub fn emit_parse_err<'files>(
         };
 
         let writer = StandardStream::stderr(ColorChoice::Auto);
-        let config = codespan_reporting::term::Config::default();
+        let mut config = codespan_reporting::term::Config::default();
+        config.chars = codespan_reporting::term::Chars::ascii();
         term::emit(&mut writer.lock(), &config, files, &diagnostic)
             .expect("error can be emitted to stdout");
     }

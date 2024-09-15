@@ -18,6 +18,16 @@ pub enum Context {
         id: Uuid,
         ty: Expr,
     },
+    RecTy {
+        outer: Rc<Self>,
+        id: Uuid,
+        ty: Expr,
+    },
+    RecVal {
+        outer: Rc<Self>,
+        id: Uuid,
+        val: Expr,
+    },
     ThisInductive {
         outer: Rc<Self>,
         path: Path,
@@ -30,6 +40,12 @@ impl Display for Context {
         match self {
             Context::Empty => Ok(()),
             Context::Var { outer, id, .. } => write!(f, "{outer} {}", "●".with(uuid_color(*id))),
+            Context::RecTy { outer, id, .. } => {
+                write!(f, "{outer} (rec {})", "●".with(uuid_color(*id)))
+            }
+            Context::RecVal { outer, id, .. } => {
+                write!(f, "{outer} rec-val{{{}}}", "●".with(uuid_color(*id)))
+            }
             Context::ThisInductive { outer, path, .. } => write!(f, "{outer} {{inductive {path}}}"),
         }
     }
@@ -44,6 +60,27 @@ impl Context {
         }
     }
 
+    pub fn with_vars(self, vars: impl IntoIterator<Item = (Uuid, Expr)>) -> Self {
+        vars.into_iter()
+            .fold(self, |ctx, (id, ty)| ctx.with_var(id, ty))
+    }
+
+    pub fn with_rec_ty(self, id: Uuid, ty: Expr) -> Self {
+        Self::RecTy {
+            outer: Rc::new(self),
+            id,
+            ty,
+        }
+    }
+
+    pub fn with_rec_val(self, id: Uuid, val: Expr) -> Self {
+        Self::RecVal {
+            outer: Rc::new(self),
+            id,
+            val,
+        }
+    }
+
     pub fn ty_of_var(&self, search_id: Uuid) -> Option<&Expr> {
         match self {
             Self::Empty => None,
@@ -54,7 +91,41 @@ impl Context {
                     outer.ty_of_var(search_id)
                 }
             }
-            Self::ThisInductive { outer, .. } => outer.ty_of_var(search_id),
+            Self::ThisInductive { outer, .. }
+            | Self::RecTy { outer, .. }
+            | Self::RecVal { outer, .. } => outer.ty_of_var(search_id),
+        }
+    }
+
+    pub fn ty_of_rec(&self, search_id: Uuid) -> Option<&Expr> {
+        match self {
+            Self::Empty => None,
+            Self::RecTy { outer, id, ty } => {
+                if *id == search_id {
+                    Some(ty)
+                } else {
+                    outer.ty_of_rec(search_id)
+                }
+            }
+            Self::ThisInductive { outer, .. }
+            | Self::Var { outer, .. }
+            | Self::RecVal { outer, .. } => outer.ty_of_rec(search_id),
+        }
+    }
+
+    pub fn val_of_rec(&self, search_id: Uuid) -> Option<&Expr> {
+        match self {
+            Self::Empty => None,
+            Self::RecVal { outer, id, val } => {
+                if *id == search_id {
+                    Some(val)
+                } else {
+                    outer.val_of_rec(search_id)
+                }
+            }
+            Self::ThisInductive { outer, .. }
+            | Self::Var { outer, .. }
+            | Self::RecTy { outer, .. } => outer.val_of_rec(search_id),
         }
     }
 
@@ -63,7 +134,9 @@ impl Context {
         match self {
             Self::Empty => None,
             Self::ThisInductive { path, ty, .. } => Some((path, ty)),
-            Self::Var { outer, .. } => outer.this_inductive(),
+            Self::Var { outer, .. } | Self::RecTy { outer, .. } | Self::RecVal { outer, .. } => {
+                outer.this_inductive()
+            }
         }
     }
 }

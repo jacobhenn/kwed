@@ -55,6 +55,18 @@ pub enum Expr {
         span: Span,
     },
 
+    Match {
+        arg: Box<Self>,
+        cod_pars: Vec<Ident>,
+        cod_body: Box<Self>,
+        arms: Vec<Arm>,
+        span: Span,
+    },
+    Rec {
+        arg_name: Ident,
+        span: Span,
+    },
+
     Number {
         number: i64,
         span: Span,
@@ -70,6 +82,27 @@ pub struct Param {
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Params(pub Vec<Param>);
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Arm {
+    pub constructor: Ident,
+    pub cons_args: Vec<Ident>,
+    pub body: Expr,
+}
+
+impl Arm {
+    fn desugared(self, not: &HashMap<String, Expr>, mod_name: &Ident) -> Result<desugared::Arm> {
+        Ok(desugared::Arm {
+            constructor: self.constructor,
+            cons_args: self
+                .cons_args
+                .into_iter()
+                .map(|name| (name, Uuid::new_v4()))
+                .collect(),
+            body: self.body.desugared(not, mod_name)?,
+        })
+    }
+}
 
 #[derive(Debug, PartialEq)]
 pub enum Item {
@@ -112,6 +145,8 @@ impl Expr {
             | Expr::Fn { span, .. }
             | Expr::FnType { span, .. }
             | Expr::FnApp { span, .. }
+            | Expr::Match { span, .. }
+            | Expr::Rec { span, .. }
             | Expr::Number { span, .. } => span.clone(),
         }
     }
@@ -125,6 +160,8 @@ impl Expr {
             | Expr::Fn { span, .. }
             | Expr::FnType { span, .. }
             | Expr::FnApp { span, .. }
+            | Expr::Match { span, .. }
+            | Expr::Rec { span, .. }
             | Expr::Number { span, .. } => span,
         }
     }
@@ -152,12 +189,36 @@ impl Expr {
                 .with_fn_params(params.desugared(not, mod_name)?),
             Expr::FnType { params, cod, .. } => cod
                 .desugared(not, mod_name)?
-                .with_fn_params(params.desugared(not, mod_name)?),
+                .with_fn_ty_params(params.desugared(not, mod_name)?),
             Expr::FnApp { func, args, .. } => func.desugared(not, mod_name)?.with_args(
                 args.into_iter()
                     .map(|arg| arg.desugared(not, mod_name))
                     .collect::<Result<Vec<_>>>()?,
             ),
+            Expr::Match {
+                arg,
+                cod_pars,
+                cod_body,
+                arms,
+                span,
+            } => desugared::Expr::Match {
+                arg: Rc::new(arg.desugared(not, mod_name)?),
+                cod_pars: cod_pars
+                    .into_iter()
+                    .map(|name| (name, Uuid::new_v4()))
+                    .collect(),
+                cod_body: Rc::new(cod_body.desugared(not, mod_name)?),
+                arms: arms
+                    .into_iter()
+                    .map(|arm| arm.desugared(not, mod_name))
+                    .collect::<Result<_>>()?,
+                span: Some(span),
+            },
+            Expr::Rec { arg_name, span } => desugared::Expr::Rec {
+                arg_id: Uuid::nil(),
+                arg_name,
+                span: Some(span),
+            },
             Expr::Number { number, span } => {
                 let Some(mut number_0) = not.get("number-0").cloned() else {
                     bail!(Some(span), "notation `number-0` not set");
@@ -272,9 +333,12 @@ impl Item {
                     .desugared(not, mod_name)?
                     .with_fn_ty_params(params_desugared.clone());
 
+                let val_span = val.span();
+
                 let val = val
                     .desugared(not, mod_name)?
-                    .with_fn_params(params_desugared);
+                    .with_fn_params(params_desugared)
+                    .with_span(val_span);
 
                 vec![(path, desugared::Item::Def { ty, val })]
             }

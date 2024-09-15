@@ -18,9 +18,10 @@ use crate::ast::sugared;
 
 use std::{mem, path::PathBuf};
 
-use ast::Ident;
+use ast::{desugared, Ident};
 use clap::Parser as _;
 use codespan_reporting::files::SimpleFiles;
+use kernel::context::Context;
 use tracing::{debug, info, Level};
 
 #[derive(clap::Parser, Debug)]
@@ -28,6 +29,10 @@ use tracing::{debug, info, Level};
 struct Args {
     /// path to the kwed module to type-check
     path: PathBuf,
+
+    /// print the type of an item in the given module. provide a fully qualified path
+    #[arg(short, long)]
+    type_of: Option<String>,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -50,8 +55,26 @@ fn main() -> anyhow::Result<()> {
 
     let module = sugared::Module::load_from_path(&args.path, &mut files)?;
 
-    if let Err(e) = process_root_module(module, &args.path, &mut files) {
-        e.emit(&files)?;
+    let checked_module = match process_root_module(module, &args.path, &mut files) {
+        Ok(md) => md,
+        Err(e) => {
+            e.emit(&files)?;
+            return Ok(());
+        }
+    };
+
+    if let Some(target_path) = args.type_of {
+        let components: Vec<Ident> = target_path.split('.').map(Ident::from_str).collect();
+        let target_path = ast::Path { components };
+
+        println!("type of `{target_path}`:");
+        println!(
+            "    {}",
+            target_path
+                .to_expr()
+                .ty(&checked_module, &Context::Empty, 0)
+                .expect("module should be type-checked")
+        );
     }
 
     Ok(())
@@ -61,7 +84,7 @@ fn process_root_module(
     module: sugared::Module,
     path: &std::path::Path,
     files: &mut SimpleFiles<String, &str>,
-) -> crate::err::Result<()> {
+) -> crate::err::Result<desugared::Module> {
     let root_mod_name = Ident::from_str("Lib");
 
     let mut desugared_module = module.desugared(&root_mod_name)?;
@@ -80,9 +103,9 @@ fn process_root_module(
 
     debug!("module with items topologically sorted: {desugared_module}");
 
-    desugared_module.type_check_root()?;
+    let checked_module = desugared_module.type_check_root()?;
 
     info!("type checking successful");
 
-    Ok(())
+    Ok(checked_module)
 }

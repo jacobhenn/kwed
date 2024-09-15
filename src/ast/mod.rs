@@ -7,13 +7,23 @@ pub mod desugared;
 use std::{cmp, fmt::Display, ops::Range};
 
 use base64::prelude::*;
-use tracing::instrument;
+use tracing::{instrument, trace};
 use uuid::Uuid;
 
 #[derive(PartialEq, Eq, Debug, Hash, Clone, Default)]
 pub struct Span {
     pub file_id: usize,
     pub range: Range<usize>,
+}
+
+impl Display for Span {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}:{}..{}",
+            self.file_id, self.range.start, self.range.end
+        )
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -42,6 +52,10 @@ impl Ident {
         let encoded = BASE64_STANDARD.encode(&id.as_bytes()[..3]);
 
         Self::new(encoded)
+    }
+
+    pub fn to_expr(self) -> desugared::Expr {
+        Path::new(vec![self]).to_expr()
     }
 }
 
@@ -112,16 +126,18 @@ impl Path {
     }
 
     pub fn span(&self) -> Option<Span> {
-        if let (Some(first_span), Some(last_span)) =
-            (&self.first_component().span, &self.last_component().span)
-        {
-            Some(Span {
-                file_id: first_span.file_id,
-                range: first_span.range.start..last_span.range.end,
-            })
-        } else {
-            None
-        }
+        let last_span = self.components.last()?.span.as_ref()?;
+
+        let mut suffix_spans = self
+            .components
+            .iter()
+            .rev()
+            .map_while(|c| c.span.as_ref().filter(|s| s.file_id == last_span.file_id));
+
+        let last_span = suffix_spans.next()?;
+        let first_span = suffix_spans.last().unwrap_or_else(|| last_span);
+
+        Span::hull(first_span.clone(), last_span.clone())
     }
 
     pub fn with_prefix(mut self, prefix: Ident) -> Self {

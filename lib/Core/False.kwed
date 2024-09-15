@@ -3,5 +3,9 @@ inductive False: Type {}
 
 // From a contradiction, anything follows. A non-dependent version of `False.elim`.
 def False.ex-falso(A: Type, contradiction: False): A {
-    False.elim ([_: False] A) contradiction
+    match contradiction to [-] A {}
+}
+
+def Not(A: Type): Type {
+    A → False
 }

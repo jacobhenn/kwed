@@ -2,8 +2,8 @@ use std::{cmp, collections::HashSet, iter, rc::Rc};
 
 use crate::{
     ast::{
-        desugared::{BindingParam, Expr, Item, Module},
-        Directives, Ident, Path,
+        desugared::{Arm, BindingParam, Expr, Item, Module},
+        Directives, Ident, Path, Span,
     },
     bail,
     err::Result,
@@ -14,6 +14,7 @@ use tracing::{instrument, trace};
 
 use uuid::Uuid;
 
+// TODO: possibly replace this with `recursible_params` to be more idiomatic
 pub(super) fn recursible_param_idxs<'a>(
     ind_def_path: &'a Path,
     ind_def_params: &'a [BindingParam],
@@ -33,160 +34,337 @@ pub(super) fn recursible_param_idxs<'a>(
         .map(|(i, _par)| i)
 }
 
-// TODO: simply copying the binding params over from the inductive definition is sure to cause
-// subtle problems later down the line, but i'm tired so good luck future jacob
-// TODO: look at redundancy in where this function constructs expressions; seems like it's making
-// the same kinds of structures over and over
-#[instrument(level = "trace", skip_all, fields(path = %ind_def_path))]
-fn elim_ty(
-    ind_def_path: Path,
-    ind_def_params: &[BindingParam],
-    ind_def_ty: &Expr,
-    constructors: &[(Ident, Expr)],
-) -> Expr {
-    // Elim first fixes values of all parameters
-    let mut res_params: Vec<BindingParam> = ind_def_params.iter().cloned().collect();
+fn match_ty(
+    arg: &Expr,
+    cod_pars: &[(Ident, Uuid)],
+    cod_body: &Expr,
+    arms: &[Arm],
+    match_span: &Option<Span>,
+    md: &Module,
+    ctx: &Context,
+    depth: usize,
+) -> Result<Expr> {
+    // The internal documentation of this function will use the example of an inductively-defined
+    // type of lists of given length, called `Vec`. The definition in `kwed` syntax is as follows:
+    // ```kwed
+    // inductive Vec(A: Type): ℕ → Type {
+    // 	   nil: Vec A ℕ.0,
+    // 	   cons: (n: ℕ, Vec A n, A) → Vec A (ℕ.suc n),
+    // }
+    // ```
+    //
+    // Furthermore, the example match statement that we will be type-checking is the body of this
+    // function:
+    // ```kwed
+    // match v to [n v] Vec A (ℕ.suc n) {
+    // 	   nil => Vec.cons A ℕ.0 (Vec.nil A) a,
+    // 	   cons n' v' a' => Vec.cons A (ℕ.suc n') (rec v') a',
+    // }
+    // ```
 
-    // The type family that we are inducting in must take values of all indices...
-    let mut family_params: Vec<BindingParam> =
-        ind_def_ty.fn_ty_params().into_iter().cloned().collect();
+    // the type of the scrutinee: `Vec A n`
+    let mut arg_ty = arg.ty(md, ctx, depth + 1)?;
+    // evaluated so that we can match on type aliases
+    arg_ty.eval(md, ctx, depth + 1)?;
 
-    // ...and then an element of the inductive type itself...
-    let family_last_param = BindingParam::blank(
-        ind_def_path
-            .clone()
-            .to_expr()
-            .with_args(res_params.iter().cloned().map(BindingParam::to_var))
-            .with_args(family_params.iter().cloned().map(BindingParam::to_var)),
-    );
-    family_params.push(family_last_param);
-
-    // ...and return a Type.
-    // TODO: is this at all a sane way to assign levels to the inputs of an elim?
-    let Expr::TypeType {
-        level: ind_def_level,
-        ..
-    } = ind_def_ty.root_cod()
+    // the head of the scrutinee type; e.g. the type we are inducting over: `Vec`
+    let ind_ty @ Expr::Path {
+        path: ind_def_path, ..
+    } = arg_ty.head()
     else {
-        panic!("type of inductive def should be valid");
+        bail!(
+            arg.span(), "cannot match on non-inductive type `{}`", arg_ty.head();
+            arg_ty.head().span(), "defined here"
+        );
     };
 
-    let family_ty = Expr::type_type(*ind_def_level + 1).with_fn_ty_params(family_params);
+    // ind_def_params: `(A: Type)`
+    // ind_def_ty: `ℕ → Type`
+    // ind_def_constructors:
+    // ```
+    // nil: Vec A ℕ.0,
+    // cons: (n: ℕ, Vec A n, A) → Vec A (ℕ.suc n),
+    // ```
+    let Some(Item::Inductive {
+        params: ind_def_params,
+        ty: ind_def_ty,
+        constructors: ind_def_constructors,
+    }) = md.items.get(ind_def_path)
+    else {
+        bail!(
+            arg.span(),
+            "cannot match on `{}` - not in scope or not inductive",
+            ind_ty
+        );
+    };
 
-    let family_param = BindingParam::new(Ident::from_str("family"), family_ty);
+    // the indices specified in the type of the inductive definition: `(●: ℕ)`
+    let ind_def_indices = ind_def_ty.fn_ty_params().into_iter();
 
-    res_params.push(family_param.clone());
+    // the number of parameters specified in the inductive definition: 1
+    let ind_def_num_params = ind_def_params.len();
+    // the number of indices specified in the inductive definition: 1
+    let ind_def_num_indices = ind_def_indices.len();
 
-    // Construct arm types
-    for (constructor_name, constructor_ty) in constructors {
-        let mut arm_params: Vec<BindingParam> =
-            constructor_ty.fn_ty_params().into_iter().cloned().collect();
+    // the UUIDs of the parameters to the codomain: `[n v]`
+    let cod_par_ids = cod_pars
+        .iter()
+        .map(|(_cod_par_name, cod_par_id)| *cod_par_id);
 
-        // Append recursive parameters
-        for i in recursible_param_idxs(&ind_def_path, ind_def_params, constructor_ty) {
-            let arm_param = &arm_params[i];
+    // the particular parameter values of the inductive type that we will be matching over. unlike
+    // indices, parameters cannot change over the course of an induction. `A`
+    let arg_par_vals = arg_ty.args().into_iter().take(ind_def_num_params);
 
-            // To get the type of its resulting recursive parameter, apply the type family
-            // to it, making sure to feed in the correct index values.
-            let mut family_args: Vec<Expr> = arm_param
-                .ty
-                .args()
-                .into_iter()
-                .cloned()
-                .skip(ind_def_params.len())
-                .collect();
+    // the particular index values of the scrutinee. `n`
+    let arg_idx_vals = arg_ty.args().into_iter().skip(ind_def_num_params);
 
-            family_args.push(arm_param.clone().to_var());
-
-            let rec_par_ty = family_param.clone().to_var().with_args(family_args);
-
-            let rec_par_name = Ident::new(format!("{}_rec", arm_param.name.name));
-
-            arm_params.push(BindingParam::new(rec_par_name, rec_par_ty));
-        }
-
-        // The codomain of an arm is the type family with indices corresponding to those in the
-        // codomain of the corresponding constructor...
-        let mut family_args: Vec<Expr> = constructor_ty
-            .root_cod()
-            .args()
-            .into_iter()
-            .cloned()
-            .skip(ind_def_params.len())
-            .collect();
-
-        // ...and final argument being the application of the constructor to all of the arm's non-
-        // recursive params.
-        let mut constructor_path = ind_def_path.clone();
-        constructor_path.components.push(constructor_name.clone());
-
-        let constructor_args: Vec<Expr> =
-            iter::chain(ind_def_params, constructor_ty.fn_ty_params())
-                .cloned()
-                .map(BindingParam::to_var)
-                .collect();
-
-        let family_last_arg = constructor_path.to_expr().with_args(constructor_args);
-
-        family_args.push(family_last_arg);
-
-        let arm_cod = family_param.clone().to_var().with_args(family_args);
-
-        let arm_ty = arm_cod.with_fn_ty_params(arm_params);
-
-        let arm_name = Ident::new(format!("{constructor_name}_case"));
-
-        res_params.push(BindingParam::new(arm_name, arm_ty));
+    if cod_pars.len() != ind_def_num_indices + 1 {
+        bail!(
+            match_span.clone(),
+            "incorrect number of parameters in the codomain: expected {}, found {}",
+            ind_def_num_indices + 1,
+            cod_pars.len()
+        );
     }
 
-    // Finally, `elim` takes a scrutinee, including the appropriate index parameters...
-    let scrutinee_idx_params = ind_def_ty.fn_ty_params().into_iter().cloned();
-    let scrutinee_final_param_ty = ind_def_path.to_expr().with_args(
-        iter::chain(ind_def_params, ind_def_ty.fn_ty_params())
-            .cloned()
-            .map(BindingParam::to_var),
-    );
-    let scrutinee_final_param = BindingParam::blank(scrutinee_final_param_ty);
+    let (_cod_final_par_name, cod_final_par_id) = cod_pars
+        .last()
+        .expect("codomain should have at least one parameter");
 
-    res_params.extend(scrutinee_idx_params.clone());
-    res_params.push(scrutinee_final_param.clone());
+    // -- type-check the codomain
 
-    // ...and returns the family applied to that scrutinee.
-    let mut res_cod_args: Vec<Expr> = scrutinee_idx_params.map(BindingParam::to_var).collect();
-    let res_cod_final_arg = scrutinee_final_param.to_var();
-    res_cod_args.push(res_cod_final_arg);
+    // the types of the index parameters of the codomain, obtained from the index types specified
+    // in the inductive definition. `(ℕ)`
+    let cod_idx_par_tys = ind_def_indices.clone().map(|par| {
+        par.ty.clone().with_substitutions(
+            ind_def_params.iter().map(|par| par.id),
+            arg_par_vals.clone().cloned(),
+        )
+    });
 
-    let res_cod = family_param.to_var().with_args(res_cod_args);
+    // the type of the final parameter of the codomain, obtained from applying the inductive type
+    // former first to the fixed parameter values and second to the particular index values of
+    // the scrutinee. `Vec A n`
+    let cod_final_par_ty = ind_ty
+        .clone()
+        .with_args(arg_par_vals.clone().cloned())
+        .with_args(ind_def_indices.clone().cloned().map(BindingParam::to_var));
 
-    // TODO: do I need to evaluate this before returning it?
-    let res = res_cod.with_fn_ty_params(res_params);
+    // the context in which to type-check the codomain: `{n: ℕ, v: Vec A n}`
+    let cod_ctx = ctx
+        .clone()
+        .with_vars(cod_par_ids.clone().zip(cod_idx_par_tys))
+        .with_var(*cod_final_par_id, cod_final_par_ty);
 
-    trace!("ret: {res}");
+    // TODO: do I need to do something with this level?
+    cod_body.expect_ty_ty(md, &cod_ctx, depth + 1)?;
 
-    res
+    // -- check exhaustivity
+
+    for (cons_name, _) in ind_def_constructors {
+        if !arms.iter().any(|arm| &arm.constructor == cons_name) {
+            bail!(
+                match_span.clone(),
+                "non-exhaustive match: missing constructor `{cons_name}`";
+                cons_name.span.clone(), "defined here"
+            )
+        }
+    }
+
+    for (i, arm) in arms.iter().enumerate() {
+        if let Some((_, dup_arm)) = arms
+            .iter()
+            .enumerate()
+            .find(|(j, other_arm)| other_arm.constructor == arm.constructor && i != *j)
+        {
+            bail!(
+                arm.constructor.span.clone(), "constructor `{}` is matched twice", arm.constructor;
+                dup_arm.constructor.span.clone(), "duplicate"
+            )
+        }
+    }
+
+    // -- type-check the arms
+
+    for arm in arms {
+        // the arm used in this example will be the second one, namely
+        // ```kwed
+        // 	   cons n' v' a' => Vec.cons A (ℕ.suc n') (rec v') a',
+        // ```
+
+        // arm.constructor: Ident: the constructor that we are matching for: `cons`
+        // arm.cons_args: Vec<(Ident, Uuid)>: the arguments of the constructor we are binding:
+        //     `n' v' a'`
+        // arm.body: Expr: the return value of the arm: `Vec.cons A (ℕ.suc n') (rec v') a'`
+
+        // cons_ty: the type of the constructor for this arm: `(n: ℕ, Vec A n, A) → Vec A (ℕ.suc n)`
+        let Some((_, cons_ty)) = ind_def_constructors
+            .iter()
+            .find(|(cons_name, _)| cons_name == &arm.constructor)
+        else {
+            bail!(
+                arm.constructor.span.clone(), "no such constructor `{}`", arm.constructor;
+                arg_ty.span().clone(), "inductive type defined here"
+            )
+        };
+
+        // cons_pars: the parameters of the constructor in question: `(n: ℕ, Vec A n, A)`
+        let cons_pars: Vec<BindingParam> = cons_ty.fn_ty_params().into_iter().cloned().collect();
+
+        if arm.cons_args.len() != cons_pars.len() {
+            bail!(
+                arm.constructor.span.clone(),
+                "wrong number of arguments to `{}`: expected {}, found {}",
+                arm.constructor,
+                cons_pars.len(),
+                arm.cons_args.len();
+                cons_ty.span().clone(),
+                "defined here"
+            );
+        }
+
+        let cons_arg_ids = arm
+            .cons_args
+            .iter()
+            .map(|(_cons_arg_name, cons_arg_id)| *cons_arg_id);
+
+        // the types of the arguments to the constructor of this arm, obtained by taking the
+        // parameters of the constructor and substituting in the appropriate values for the
+        // inductive type parameters and previously bound paramaters: `(ℕ, Vec A n', A)`
+        let cons_arg_tys = cons_pars.iter().map(|par| {
+            par.ty
+                .clone()
+                .with_substitutions(
+                    ind_def_params.iter().map(|par| par.id),
+                    arg_par_vals.clone().cloned(),
+                )
+                .with_substitutions(
+                    cons_pars.iter().map(|par| par.id),
+                    arm.cons_args
+                        .iter()
+                        .map(|(name, id)| Expr::var(*id, name.clone())),
+                )
+        });
+
+        // the context in which to type-check the body of this arm. initially, this context is
+        //     `{n': ℕ, v': Vec A n', a': A}`
+        let mut arm_ctx = ctx.clone().with_vars(
+            cons_arg_ids
+                .clone()
+                .zip(cons_arg_tys.clone())
+                .map(|(cons_arg_id, cons_arg_ty)| (cons_arg_id, cons_arg_ty)),
+        );
+
+        // add recursible parameters to the arm context
+        for i in recursible_param_idxs(&ind_def_path, ind_def_params, cons_ty) {
+            let (rec_cons_arg_name, rec_cons_arg_id) = &arm.cons_args[i];
+
+            let rec_par_ty = cons_arg_tys
+                .clone()
+                .nth(i)
+                .expect("recursible_param_idxs is correct");
+
+            // indices to pass to the codomain to get the type of the recursive application of
+            // this match-expression to the recursible parameter: `n`
+            let cod_idx_args = rec_par_ty.args().into_iter().skip(ind_def_params.len());
+
+            // the type of the recursive application of this match-expression to the recursible
+            // parameter: `Vec A (ℕ.suc n')`
+            let rec_call_ty = cod_body
+                .clone()
+                .with_substitutions(cod_par_ids.clone(), cod_idx_args.cloned())
+                .with_substitution(
+                    *cod_final_par_id,
+                    Expr::var(*rec_cons_arg_id, rec_cons_arg_name.clone()),
+                );
+
+            arm_ctx = arm_ctx.with_rec_ty(*rec_cons_arg_id, rec_call_ty);
+        }
+
+        trace!("arg_par_vals: {arg_par_vals:?}");
+
+        // the elaborated version of the scrutinee given that in this branch we know it to have
+        // come from `arm.constructor` (`Vec.cons`): `Vec.cons n' v' a'`
+        let cod_final_arg = ind_def_path
+            .clone()
+            .with_suffix(arm.constructor.clone())
+            .to_expr()
+            .with_args(arg_par_vals.clone().cloned())
+            .with_args(
+                arm.cons_args
+                    .iter()
+                    .map(|(name, id)| Expr::var(*id, name.clone())),
+            );
+
+        // the elaborated type of the scrutinee given that in this branch we know some of its
+        // indices to have been constructed from indices of a lower structural component:
+        //     `Vec A (ℕ.suc n')`
+        let cod_final_arg_ty = cod_final_arg.ty(md, &arm_ctx, depth + 1)?;
+
+        // the elaborated indices of the scrutinee: `(ℕ.suc n')`
+        let cod_idx_args = cod_final_arg_ty.args().into_iter().skip(ind_def_num_params);
+
+        // the expected type of the body of this arm, obtained from applying the type family towards
+        // which we are inducting to the elaborated version of the scrutinee:
+        //     `Vec A (ℕ.suc (ℕ.suc n'))`
+        let arm_expected_ty = cod_body
+            .clone()
+            .with_substitutions(cod_par_ids.clone(), cod_idx_args.cloned())
+            .with_substitution(*cod_final_par_id, cod_final_arg);
+
+        arm.body
+            .expect_ty(&arm_expected_ty, md, &arm_ctx, depth + 1)?;
+    }
+
+    // the resulting type of the entire match expression, obtained by applying the type family
+    // towards which we are matching to the scrutinee: `Vec A (ℕ.suc n)`
+    let res = cod_body
+        .clone()
+        .with_substitutions(cod_par_ids, arg_idx_vals.cloned())
+        .with_substitution(*cod_final_par_id, arg.clone());
+
+    Ok(res)
+}
+
+#[derive(Clone, Debug)]
+enum SynEqCtx {
+    Empty,
+    Pair(Box<Self>, [Uuid; 2]),
+}
+
+impl SynEqCtx {
+    fn with_pair(self, pair: [Uuid; 2]) -> Self {
+        Self::Pair(Box::new(self), pair)
+    }
+
+    fn with_pairs(self, pairs: impl IntoIterator<Item = [Uuid; 2]>) -> Self {
+        pairs
+            .into_iter()
+            .fold(self, |acc, pair| acc.with_pair(pair))
+    }
+
+    fn contains_pair(&self, search_pair: [Uuid; 2]) -> bool {
+        match self {
+            SynEqCtx::Empty => false,
+            SynEqCtx::Pair(outer, pair) => *pair == search_pair || outer.contains_pair(search_pair),
+        }
+    }
 }
 
 impl Expr {
-    #[instrument(level = "trace", skip_all, fields(this = %this, that = %that, check_subtype = check_subtype), ret)]
-    fn subtype_or_eq_impl(
-        this: &Self,
-        that: &Self,
-        ctx: &mut HashSet<[Uuid; 2]>,
-        check_subtype: bool,
-        dvs: &Directives,
-    ) -> bool {
-        match (this, that) {
+    #[instrument(level = "trace", skip_all, fields(lhs = %lhs, rhs = %rhs, ret))]
+    fn syn_eq_impl(lhs: &Self, rhs: &Self, ctx: &SynEqCtx, dvs: &Directives) -> bool {
+        match (lhs, rhs) {
             (Expr::TypeType { level: ll, .. }, Expr::TypeType { level: rl, .. }) => {
                 if dvs.type_in_type {
                     true
-                } else if check_subtype {
-                    ll <= rl
                 } else {
                     ll == rl
                 }
             }
-            (Expr::Var { id: lid, .. }, Expr::Var { id: rid, .. }) => {
-                lid == rid || ctx.contains(&[*lid, *rid])
+            (Expr::Var { id: lid, .. }, Expr::Var { id: rid, .. })
+            | (Expr::Rec { arg_id: lid, .. }, Expr::Rec { arg_id: rid, .. }) => {
+                lid == rid || ctx.contains_pair([*lid, *rid])
             }
             (Expr::Path { path: lpath, .. }, Expr::Path { path: rpath, .. }) => lpath == rpath,
             (
@@ -201,13 +379,12 @@ impl Expr {
                     ..
                 },
             ) => {
-                let params_eq = Self::subtype_or_eq_impl(&lparam.ty, &rparam.ty, ctx, false, dvs);
+                if !Self::syn_eq_impl(&lparam.ty, &rparam.ty, ctx, dvs) {
+                    return false;
+                }
 
-                ctx.insert([lparam.id, rparam.id]);
-                let bodies_eq = Self::subtype_or_eq_impl(lbody, rbody, ctx, false, dvs);
-                ctx.remove(&[lparam.id, rparam.id]);
-
-                params_eq && bodies_eq
+                let body_ctx = ctx.clone().with_pair([lparam.id, rparam.id]);
+                Self::syn_eq_impl(lbody, rbody, &body_ctx, dvs)
             }
             (
                 Expr::FnType {
@@ -221,13 +398,12 @@ impl Expr {
                     ..
                 },
             ) => {
-                let params_eq = Self::subtype_or_eq_impl(&lparam.ty, &rparam.ty, ctx, false, dvs);
+                if !Self::syn_eq_impl(&lparam.ty, &rparam.ty, ctx, dvs) {
+                    return false;
+                }
 
-                ctx.insert([lparam.id, rparam.id]);
-                let cods_eq = Self::subtype_or_eq_impl(lcod, rcod, ctx, check_subtype, dvs);
-                ctx.remove(&[lparam.id, rparam.id]);
-
-                params_eq && cods_eq
+                let cod_ctx = ctx.clone().with_pair([lparam.id, rparam.id]);
+                Self::syn_eq_impl(lcod, rcod, &cod_ctx, dvs)
             }
             (
                 Expr::FnApp {
@@ -241,15 +417,56 @@ impl Expr {
                     ..
                 },
             ) => {
-                Self::subtype_or_eq_impl(lfunc, rfunc, ctx, false, dvs)
-                    && Self::subtype_or_eq_impl(larg, rarg, ctx, false, dvs)
+                Self::syn_eq_impl(lfunc, rfunc, ctx, dvs) && Self::syn_eq_impl(larg, rarg, ctx, dvs)
+            }
+
+            (
+                Expr::Match {
+                    arg: larg,
+                    cod_pars: lcod_pars,
+                    cod_body: lcod_body,
+                    arms: larms,
+                    ..
+                },
+                Expr::Match {
+                    arg: rarg,
+                    cod_pars: rcod_pars,
+                    cod_body: rcod_body,
+                    arms: rarms,
+                    ..
+                },
+            ) => {
+                if !Self::syn_eq_impl(larg, rarg, ctx, dvs) {
+                    return false;
+                }
+
+                let cod_body_ctx = ctx.clone().with_pairs(
+                    iter::zip(lcod_pars, rcod_pars).map(|((_, lid), (_, rid))| [*lid, *rid]),
+                );
+
+                if !Self::syn_eq_impl(lcod_body, rcod_body, &cod_body_ctx, dvs) {
+                    return false;
+                }
+
+                for (larm, rarm) in iter::zip(larms, rarms) {
+                    let arm_body_ctx = ctx.clone().with_pairs(
+                        iter::zip(&larm.cons_args, &rarm.cons_args)
+                            .map(|((_, lid), (_, rid))| [*lid, *rid]),
+                    );
+
+                    if !Self::syn_eq_impl(&larm.body, &rarm.body, &arm_body_ctx, dvs) {
+                        return false;
+                    }
+                }
+
+                true
             }
             (_, _) => false,
         }
     }
 
-    pub fn subtype_or_eq(this: &Self, that: &Self, dvs: &Directives) -> bool {
-        Self::subtype_or_eq_impl(this, that, &mut HashSet::new(), true, dvs)
+    pub fn syn_eq(lhs: &Self, rhs: &Self, dvs: &Directives) -> bool {
+        Self::syn_eq_impl(lhs, rhs, &SynEqCtx::Empty, dvs)
     }
 
     #[instrument(level = "trace", skip(md, ctx), fields(self = %self, expected = %expected))]
@@ -276,13 +493,13 @@ impl Expr {
             && found_level <= expected_level
         {
             return Ok(());
-        } else if Self::subtype_or_eq(&found_evald, &expected_evald, &md.directives) {
+        } else if Self::syn_eq(&found_evald, &expected_evald, &md.directives) {
             return Ok(());
         }
 
         bail!(
             self.span(),
-            "mismatched types: expected `{expected}`, found `{found}`";
+            "mismatched types:\n    expected `{expected}`,\n    found    `{found}`";
             expected_evald.span(),
             "expected this";
             @note "expected `{expected_evald}`";
@@ -320,10 +537,8 @@ impl Expr {
                 ty.displace_ty(*amount);
                 ty
             }
-            Self::Var { id, span, .. } => {
-                let Some(ty) = ctx.ty_of_var(*id) else {
-                    bail!(span.clone(), "INTERNAL ERROR: unbound variable `{self}`")
-                };
+            Self::Var { id, .. } => {
+                let ty = ctx.ty_of_var(*id).expect("variables are bound");
                 ty.clone()
             }
             Self::Path { path, span } => {
@@ -334,16 +549,13 @@ impl Expr {
                 } else if let parent = path.clone().parent()
                     && let Some(Item::Inductive {
                         params,
-                        ty,
                         constructors,
                         ..
                     }) = md.items.get(&parent)
                 {
                     let last_component = path.components.last().expect("paths are non-empty");
 
-                    if last_component.name == "elim" {
-                        elim_ty(parent, &params, &ty, &constructors)
-                    } else if let Some((_name, ty)) = constructors
+                    if let Some((_name, ty)) = constructors
                         .iter()
                         .find(|(name, _ty)| name == last_component)
                     {
@@ -413,6 +625,30 @@ impl Expr {
 
                 Rc::make_mut(&mut cod).substitute(param.id, arg);
                 Rc::unwrap_or_clone(cod)
+            }
+            Expr::Match {
+                arg,
+                cod_pars,
+                cod_body,
+                arms,
+                span,
+            } => match_ty(arg, cod_pars, cod_body, arms, span, md, ctx, depth)?,
+            Expr::Rec {
+                arg_name, arg_id, ..
+            } => {
+                if let Some(ty_of_rec) = ctx.ty_of_rec(*arg_id) {
+                    ty_of_rec.clone()
+                } else if ctx.ty_of_var(*arg_id).is_some() {
+                    bail!(
+                        arg_name.span.clone(), "variable `{arg_name}` is not recursible";
+                        @note "you may be using `rec` incorrectly. consult the documentation"
+                    )
+                } else {
+                    bail!(
+                        arg_name.span.clone(),
+                        "varibale `{arg_name}` not found in this scope"
+                    )
+                }
             }
         };
 
@@ -501,7 +737,7 @@ impl Item {
 }
 
 impl Module {
-    pub fn type_check_root(self) -> Result<()> {
+    pub fn type_check_root(self) -> Result<Self> {
         let mut checked_module = Module::new();
         checked_module.directives = self.directives;
 
@@ -512,6 +748,6 @@ impl Module {
             checked_module.items.insert(path, item);
         }
 
-        Ok(())
+        Ok(checked_module)
     }
 }

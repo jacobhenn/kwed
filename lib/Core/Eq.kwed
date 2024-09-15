@@ -1,19 +1,25 @@
 // Equality
-inductive =(A: Type, x: A): A → Type {
+inductive =(A: Type, x: A): (y: A) → Type {
     refl: = A x x,
 }
 
 // Congruence of equality: any function may be applied to both sides of an equation
 def =.cong(A B: Type, f: A → B, x y: A, p: = A x y): = B (f x) (f y) {
-	=.elim A x ([y: A, _: = A x y] = B (f x) (f y)) (=.refl B (f x)) y p
+    match p to [y _] = B (f x) (f y) {
+        refl => =.refl B (f x)
+    }
 }
 
 // Transitivity of equality: if x=y and y=z, then x=z
 def =.compose(A: Type, x y z: A, p: = A x y, q: = A y z): = A x z {
-    =.elim A y ([z: A, _: = A y z] = A x z) p z q
+    match q to [z _] = A x z {
+        refl => p,
+    }
 }
 
 // Symmetry of equality: if x=y, the y=x
 def =.inv(A: Type, x y: A, p: = A x y): = A y x {
-    =.elim A x ([y: A, _: = A x y] = A y x) (=.refl A x) y p
+    match p to [y _] = A y x {
+        refl => =.refl A x,
+    }
 }

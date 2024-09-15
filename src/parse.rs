@@ -1,7 +1,9 @@
 use crate::ast::{
-    sugared::{Expr, Item, Module, Param, Params},
+    sugared::{Arm, Expr, Item, Module, Param, Params},
     Directives, Ident, Path, Span,
 };
+
+use std::str::FromStr;
 
 #[cfg(test)]
 use std::assert_matches::assert_matches;
@@ -25,12 +27,16 @@ const SPECIAL_CHARS: &[char] = &['.', ',', ':', ';', '{', '}', '(', ')', '[', ']
 const RESERVED_IDENTS: &[&str] = &[
     "def",
     "inductive",
+    "match",
+    "to",
+    "rec",
     "struct",
     "Type",
     "let",
     "module",
     "use",
     "notation",
+    "=>",
     "→",
     "↑",
     "//",
@@ -54,7 +60,6 @@ impl Ident {
                     Ok(name)
                 }
             })
-            // text::ident()
             .map_with_span(move |name, range| Self {
                 name,
                 span: Some(Span { file_id, range }),
@@ -82,6 +87,23 @@ impl Path {
                 }
             })
             .map(|components| Self { components })
+    }
+}
+impl Arm {
+    pub fn parse<'a>(
+        file_id: usize,
+        expr: impl Parser<char, Expr, Error = Simple<char>> + 'a,
+    ) -> impl Parser<char, Self, Error = Simple<char>> + 'a {
+        Ident::parse(file_id)
+            .padded_by(pad())
+            .then(Ident::parse(file_id).padded_by(pad()).repeated())
+            .then_ignore(just("=>").padded_by(pad()))
+            .then(expr)
+            .map(|((constructor, cons_args), body)| Self {
+                constructor,
+                cons_args,
+                body,
+            })
     }
 }
 
@@ -358,6 +380,48 @@ impl Expr {
             .debug("function application")
     }
 
+    pub fn parse_match<'a>(
+        file_id: usize,
+        expr: impl Parser<char, Expr, Error = Simple<char>> + Clone + 'a,
+    ) -> impl Parser<char, Self, Error = Simple<char>> + 'a {
+        text::keyword("match")
+            .ignore_then(expr.clone().padded_by(pad()))
+            .then_ignore(text::keyword("to").padded_by(pad()))
+            .then(
+                Ident::parse(file_id)
+                    .padded_by(pad())
+                    .repeated()
+                    .delimited_by(just('['), just(']'))
+                    .padded_by(pad()),
+            )
+            .then(expr.clone().padded_by(pad()))
+            .then(
+                Arm::parse(file_id, expr)
+                    .padded_by(pad())
+                    .separated_by(just(',').padded())
+                    .allow_trailing()
+                    .delimited_by(just('{'), just('}')),
+            )
+            .map_with_span(
+                move |(((arg, cod_pars), cod_body), arms), range| Self::Match {
+                    arg: Box::new(arg),
+                    cod_pars,
+                    cod_body: Box::new(cod_body),
+                    arms,
+                    span: Span::new(file_id, range),
+                },
+            )
+    }
+
+    pub fn parse_rec<'a>(file_id: usize) -> impl Parser<char, Self, Error = Simple<char>> + 'a {
+        text::keyword("rec")
+            .ignore_then(Ident::parse(file_id).padded_by(pad()))
+            .map_with_span(move |arg, range| Self::Rec {
+                arg_name: arg,
+                span: Span::new(file_id, range),
+            })
+    }
+
     pub fn parse_number(file_id: usize) -> impl Parser<char, Self, Error = Simple<char>> {
         text::int(10)
             .validate(|s: String, span, emit| match s.parse::<i64>() {
@@ -383,12 +447,14 @@ impl Expr {
 
     pub fn parse_atomic<'a>(
         file_id: usize,
-        expr: impl Parser<char, Expr, Error = Simple<char>> + 'a,
+        expr: impl Parser<char, Expr, Error = Simple<char>> + Clone + 'a,
     ) -> impl Parser<char, Self, Error = Simple<char>> + 'a {
         choice((
             Self::parse_type_type(file_id),
+            Self::parse_rec(file_id),
+            Self::parse_match(file_id, expr.clone()),
             Self::parse_path(file_id),
-            Self::parse_in_parens(expr),
+            Self::parse_in_parens(expr.clone()),
             Self::parse_number(file_id),
         ))
         .debug("atomic expression")

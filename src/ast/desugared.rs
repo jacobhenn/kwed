@@ -53,6 +53,19 @@ pub enum Expr {
         arg: Rc<Self>,
         span: Option<Span>,
     },
+
+    Match {
+        arg: Rc<Self>,
+        cod_pars: Vec<(Ident, Uuid)>,
+        cod_body: Rc<Self>,
+        arms: Vec<Arm>,
+        span: Option<Span>,
+    },
+    Rec {
+        arg_id: Uuid,
+        arg_name: Ident,
+        span: Option<Span>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -112,6 +125,13 @@ impl Param {
 }
 
 #[derive(Debug, PartialEq, Clone)]
+pub struct Arm {
+    pub constructor: Ident,
+    pub cons_args: Vec<(Ident, Uuid)>,
+    pub body: Expr,
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub enum Item {
     Def {
         ty: Expr,
@@ -145,17 +165,17 @@ pub(crate) fn uuid_color(id: Uuid) -> Color {
 impl Display for Expr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Expr::TypeType { level, .. } => write!(f, "Type {level}"),
-            Expr::Displace { amount, arg, .. } => write!(f, "↑ {amount} {arg}"),
+            Expr::TypeType { level, .. } => write!(f, "Type {level}")?,
+            Expr::Displace { amount, arg, .. } => write!(f, "↑ {amount} {arg}")?,
             Expr::Var { id, name, .. } => {
-                write!(f, "{}", name.name.as_str().with(uuid_color(*id)))
+                write!(f, "{}", name.name.as_str().with(uuid_color(*id)))?
             }
             // TODO: maybe do something fancy here to write just enough components to disambiguate
             Expr::Path { path, .. } => {
                 if std::env::var("KW_FULL_PATHS").is_ok_and(|s| s == "true") {
-                    write!(f, "{}", path)
+                    write!(f, "{}", path)?
                 } else {
-                    write!(f, "{}", path.last_component())
+                    write!(f, "{}", path.last_component())?
                 }
             }
             Expr::Fn { param, body, .. } => write!(
@@ -163,13 +183,13 @@ impl Display for Expr {
                 "[{}: {}] {body}",
                 param.name.name.as_str().with(uuid_color(param.id)),
                 param.ty,
-            ),
+            )?,
             Expr::FnType { param, cod, .. } => write!(
                 f,
                 "({}: {}) → {cod}",
                 param.name.name.as_str().with(uuid_color(param.id)),
                 param.ty
-            ),
+            )?,
             Expr::FnApp { .. } => {
                 self.head().fmt_in_parens(f)?;
 
@@ -177,16 +197,72 @@ impl Display for Expr {
                     write!(f, " ")?;
                     arg.fmt_in_parens(f)?;
                 }
+            }
+            Expr::Match {
+                arg,
+                cod_pars,
+                cod_body,
+                arms,
+                ..
+            } => write!(
+                f,
+                "match {arg} to [{}] {cod_body} {{ {} }}",
+                cod_pars
+                    .iter()
+                    .map(|(name, id)| name.name.as_str().with(uuid_color(*id)).to_string())
+                    .intersperse(" ".to_string())
+                    .collect::<String>(),
+                arms.iter()
+                    .map(Arm::to_string)
+                    .intersperse(", ".to_string())
+                    .collect::<String>(),
+            )?,
+            Expr::Rec {
+                arg_id, arg_name, ..
+            } => write!(
+                f,
+                "rec {}",
+                arg_name.name.as_str().with(uuid_color(*arg_id))
+            )?,
+        };
 
-                Ok(())
+        if self.is_atomic() && std::env::var("KW_PRINT_SPANS").is_ok_and(|s| s == "true") {
+            if let Some(span) = self.span() {
+                write!(f, "<{}>", span)?;
+            } else {
+                write!(f, "<?>")?;
             }
         }
+
+        Ok(())
+    }
+}
+
+impl Arm {
+    pub fn span(&self) -> Option<Span> {
+        Span::hull_opts(self.constructor.span.clone(), self.body.span())
+    }
+}
+
+impl Display for Arm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} {} => {}",
+            self.constructor,
+            self.cons_args
+                .iter()
+                .map(|(name, id)| name.name.as_str().with(uuid_color(*id)).to_string())
+                .intersperse(" ".to_string())
+                .collect::<String>(),
+            self.body,
+        )
     }
 }
 
 impl Display for Param {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}: {}", self.name, self.ty)
+        write!(f, "{}: {}", self.name, self.ty,)
     }
 }
 
@@ -321,7 +397,11 @@ impl Expr {
 
     pub fn is_atomic(&self) -> bool {
         match self {
-            Self::TypeType { .. } | Self::Var { .. } | Self::Path { .. } => true,
+            Self::TypeType { .. }
+            | Self::Var { .. }
+            | Self::Path { .. }
+            | Self::Match { .. }
+            | Self::Rec { .. } => true,
             Self::Fn { .. } | Self::FnType { .. } | Self::FnApp { .. } | Self::Displace { .. } => {
                 false
             }
@@ -474,7 +554,9 @@ impl Expr {
             | Expr::Path { span, .. }
             | Expr::Fn { span, .. }
             | Expr::FnType { span, .. }
-            | Expr::FnApp { span, .. } => span.clone(),
+            | Expr::FnApp { span, .. }
+            | Expr::Match { span, .. }
+            | Expr::Rec { span, .. } => span.clone(),
         }
     }
 
@@ -486,13 +568,15 @@ impl Expr {
             | Expr::Path { span, .. }
             | Expr::Fn { span, .. }
             | Expr::FnType { span, .. }
-            | Expr::FnApp { span, .. } => span,
+            | Expr::FnApp { span, .. }
+            | Expr::Match { span, .. }
+            | Expr::Rec { span, .. } => span,
         }
     }
 
     pub fn displace_ty(&mut self, amount: usize) {
         match self {
-            Expr::Var { .. } | Expr::Path { .. } => (),
+            Expr::Var { .. } | Expr::Path { .. } | Expr::Rec { .. } => (),
             Expr::Displace { .. } => {
                 panic!("`displace` shouldn't encounter a `Displace` expression")
             }
@@ -509,11 +593,24 @@ impl Expr {
                 Rc::make_mut(func).displace_ty(amount);
                 Rc::make_mut(arg).displace_ty(amount);
             }
+            Expr::Match {
+                arg,
+                cod_body,
+                arms,
+                ..
+            } => {
+                Rc::make_mut(arg).displace_ty(amount);
+                Rc::make_mut(cod_body).displace_ty(amount);
+                for arm in arms {
+                    arm.body.displace_ty(amount);
+                }
+            }
         }
     }
 
     pub fn prefix_paths(&mut self, prefix: &Ident) {
         match self {
+            Expr::Rec { .. } => (),
             Expr::Path { path, .. } => *path = path.clone().resolved_in(prefix),
             Expr::Var { .. } | Expr::TypeType { .. } => (),
             Expr::Displace { .. } => {
@@ -531,15 +628,28 @@ impl Expr {
                 Rc::make_mut(func).prefix_paths(prefix);
                 Rc::make_mut(arg).prefix_paths(prefix);
             }
+            Expr::Match {
+                arg,
+                cod_body,
+                arms,
+                ..
+            } => {
+                Rc::make_mut(arg).prefix_paths(prefix);
+                Rc::make_mut(cod_body).prefix_paths(prefix);
+                for arm in arms {
+                    arm.body.prefix_paths(prefix);
+                }
+            }
         }
     }
 
-    pub fn dependencies(&self, this_inductive: Option<&Path>) -> Vec<Path> {
+    pub fn dependencies(&self, this_ind: Option<&Path>) -> Vec<Path> {
         match self {
+            Expr::Rec { .. } => Vec::new(),
             Expr::TypeType { .. } | Expr::Var { .. } => Vec::new(),
-            Expr::Displace { arg, .. } => arg.dependencies(this_inductive),
+            Expr::Displace { arg, .. } => arg.dependencies(this_ind),
             Expr::Path { path, .. } => {
-                if let Some(ind_path) = this_inductive
+                if let Some(ind_path) = this_ind
                     && ind_path == path
                 {
                     Vec::new()
@@ -551,20 +661,35 @@ impl Expr {
             }
             Expr::Fn { param, body, .. } => param
                 .ty
-                .dependencies(this_inductive)
+                .dependencies(this_ind)
                 .into_iter()
-                .chain(body.dependencies(this_inductive))
+                .chain(body.dependencies(this_ind))
                 .collect(),
             Expr::FnType { param, cod, .. } => param
                 .ty
-                .dependencies(this_inductive)
+                .dependencies(this_ind)
                 .into_iter()
-                .chain(cod.dependencies(this_inductive))
+                .chain(cod.dependencies(this_ind))
                 .collect(),
             Expr::FnApp { func, arg, .. } => func
-                .dependencies(this_inductive)
+                .dependencies(this_ind)
                 .into_iter()
-                .chain(arg.dependencies(this_inductive))
+                .chain(arg.dependencies(this_ind))
+                .collect(),
+            Expr::Match {
+                arg,
+                cod_body,
+                arms,
+                ..
+            } => arg
+                .dependencies(this_ind)
+                .into_iter()
+                .chain(cod_body.dependencies(this_ind))
+                .chain(
+                    arms.iter()
+                        .map(|arm| arm.body.dependencies(this_ind).into_iter())
+                        .flatten(),
+                )
                 .collect(),
         }
     }
@@ -714,7 +839,7 @@ impl Module {
         Ok(())
     }
 
-    #[instrument(level = "trace", skip(self), ret)]
+    #[instrument(level = "trace", skip_all, fields(path = %path), ret)]
     fn get_dependency_path(&self, path: &Path) -> Option<Path> {
         trace!("{self}");
         if self.items.contains_key(path) {
