@@ -9,8 +9,6 @@ use crossterm::style::{Color, Stylize};
 
 use indexmap::IndexMap;
 
-use tracing::{debug, instrument, trace};
-
 use ulid::Ulid;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -798,7 +796,6 @@ impl Module {
         }
     }
 
-    #[instrument(level = "debug", skip(files), fields(name = %name))]
     pub fn load_from_path_and_name(
         parent_path: &std::path::Path,
         name: &Ident,
@@ -811,8 +808,6 @@ impl Module {
         dir_path.push(format!("{name}"));
         let file_path = dir_path.with_extension("kwed");
         dir_path.push(format!("Mod.kwed"));
-
-        debug!("mod_dir_path: {dir_path:?}, mod_file_path: {file_path:?}");
 
         if dir_path.is_file() {
             match sugared::Module::load_from_file(&dir_path, files) {
@@ -844,7 +839,6 @@ impl Module {
         }
     }
 
-    #[instrument(level = "trace", skip(files), fields(mod_name = %mod_name, self = %self))]
     pub fn load_submodules(
         &mut self,
         mod_name: &Ident,
@@ -874,14 +868,10 @@ impl Module {
 
         self.prefix_paths(mod_name);
 
-        trace!("submods loaded: {self}");
-
         Ok(())
     }
 
-    #[instrument(level = "trace", skip_all, fields(path = %path), ret)]
     fn get_dependency_path(&self, path: &Path) -> Option<Path> {
-        trace!("{self}");
         if self.items.contains_key(path) {
             Some(path.clone())
         } else if let Some(Item::Inductive { constructors, .. }) =
@@ -897,7 +887,6 @@ impl Module {
         }
     }
 
-    #[instrument(level = "trace", skip_all, fields(path = %path))]
     fn topological_sort_visit(
         &self,
         path: Path,
@@ -936,8 +925,6 @@ impl Module {
     }
 
     pub fn topological_sort(&mut self) -> Result<()> {
-        trace!("items before topological sort:");
-
         let mut new_items = IndexMap::new();
 
         for path in self.items.keys() {

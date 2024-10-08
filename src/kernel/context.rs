@@ -7,7 +7,6 @@ use std::{fmt::Display, rc::Rc};
 
 use crossterm::style::Stylize;
 
-use tracing::instrument;
 use ulid::Ulid;
 
 #[derive(Clone, Debug)]
@@ -129,7 +128,6 @@ impl Context {
         }
     }
 
-    #[instrument(level = "trace", skip(self), fields(self = %self), ret)]
     pub fn this_inductive(&self) -> Option<(&Path, &Expr)> {
         match self {
             Self::Empty => None,

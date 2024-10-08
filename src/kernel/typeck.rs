@@ -10,8 +10,6 @@ use crate::{
     kernel::context::Context,
 };
 
-use tracing::trace;
-
 use ulid::Ulid;
 
 // TODO: possibly replace this with `recursible_params` to be more idiomatic
@@ -280,8 +278,6 @@ fn match_ty(
 
             arm_ctx = arm_ctx.with_rec_ty(*rec_cons_arg_id, rec_call_ty);
         }
-
-        trace!("arg_par_vals: {arg_par_vals:?}");
 
         // the elaborated version of the scrutinee given that in this branch we know it to have
         // come from `arm.constructor` (`Vec.cons`): `Vec.cons n' v' a'`

@@ -6,10 +6,6 @@ pub mod desugared;
 
 use std::{cmp, fmt::Display, ops::Range};
 
-use base64::prelude::*;
-use tracing::{instrument, trace};
-use ulid::Ulid;
-
 #[derive(PartialEq, Eq, Debug, Hash, Clone, Default)]
 pub struct Span {
     pub file_id: usize,
@@ -148,7 +144,6 @@ impl Path {
         self
     }
 
-    #[instrument(level = "trace", skip_all, fields(self = %self, mod_name = %mod_name), ret)]
     pub fn resolved_in(mut self, mod_name: &Ident) -> Self {
         match self.first_component().name.as_str() {
             "Lib" => self,

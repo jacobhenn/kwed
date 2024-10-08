@@ -7,8 +7,6 @@ use crate::{
     kernel::{context::Context, typeck::recursible_param_idxs},
 };
 
-use tracing::{instrument, trace};
-
 use ulid::Ulid;
 
 impl Expr {
@@ -117,7 +115,6 @@ impl Expr {
         }
     }
 
-    #[instrument(level = "trace", skip(self, md, ctx), fields(self = %self, ctx = %ctx))]
     pub fn eval(&mut self, md: &Module, ctx: &Context, depth: usize) -> Result<()> {
         println!("{blank:|>align$}eval: {self}", blank = "", align = depth);
 

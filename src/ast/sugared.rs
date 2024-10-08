@@ -11,8 +11,6 @@ use chumsky::Parser;
 use codespan_reporting::files::SimpleFiles;
 use indexmap::IndexMap;
 
-use tracing::{debug, instrument, trace};
-
 use ulid::Ulid;
 
 const FORBIDDEN_NAMES: &[&str] = &["Super", "Lib"];
@@ -371,7 +369,6 @@ fn desugar_struct(
         // the return type of this getter: B (Pair.first A B pair)
         let mut getter_ret_ty = desugared_field_ty.clone();
         for name in fields.iter().map(|(name, _ty)| name) {
-            trace!("  replacing `{name}`");
             getter_ret_ty.replace(
                 &|expr: &desugared::Expr| expr.is_path_to_ident(name),
                 &prepend_struct_path(name)
@@ -381,8 +378,6 @@ fn desugar_struct(
                     .with_arg(getter_final_param.clone().to_var()),
             );
         }
-
-        trace!("getter_ret_ty for {}: {}", field_name, getter_ret_ty);
 
         // the type of this getter: `(A: Type, B: A → Type, pair: Pair A B) → getter_ret_ty`
         let getter_ty = getter_ret_ty
@@ -535,7 +530,6 @@ impl Module {
         Ok(())
     }
 
-    #[instrument(level = "debug", skip(files))]
     pub fn load_from_file(
         path: &std::path::Path,
         files: &mut SimpleFiles<String, &str>,
@@ -547,16 +541,12 @@ impl Module {
         let (module, errs) = Self::parse_final(file_id).parse_recovery(src);
 
         if !errs.is_empty() {
-            debug!("recovered AST: {module:#?}");
-
             err::emit_parse_err(errs, file_id, &files);
 
             anyhow::bail!("failed to parse module at {path:?}");
         };
 
         let module = module.expect("errorless parsing should be successful");
-
-        debug!("parsed module: {module:#?}");
 
         Ok(module)
     }

@@ -13,8 +13,6 @@ use codespan_reporting::{
     },
 };
 
-use tracing::debug;
-
 fn convert_span(src: &str, mut span: Range<usize>) -> Range<usize> {
     let start = src
         .char_indices()
