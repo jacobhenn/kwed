@@ -1,6 +1,127 @@
-// struct Iff(A B: Type) {
-//     only-if: A → B,
-//     if: B → A,
-// }
+use { Super.Eq.Eq }
 
-// def ↔: (A B: Type) → Type { Iff }
+axiom POINTWISE: (
+    A B: Type,
+    f g: A → B,
+    (x: A) → Eq B (f x) (g x)
+) → Eq (A → B) f g;
+
+def eta(A B: Type, f: A → B): Eq (A → B) f ([x: A] f x) {
+    Eq.refl (A → B) f
+}
+
+// -------------------------------------------------------------------------------------------------
+
+def compose(A B C: Type, f: A → B, g: B → C): A → C {
+    [a: A] g (f a)
+}
+
+def >>(A B C: Type, f: A → B, g: B → C): A → C {
+    compose A B C f g
+}
+
+def <<(A B C: Type, g: B → C, f: A → B): A → C {
+    compose A B C f g
+}
+
+
+def compose3.right-assocd(A B C D: Type, f: A → B, g: B → C, h: C → D): A → D {
+    (compose A B D f (compose B C D g h))
+}
+
+def compose3.left-assocd(A B C D: Type, f: A → B, g: B → C, h: C → D): A → D {
+    (compose A C D (compose A B C f g) h)
+}
+
+def compose.assoc(A B C D: Type, f: A → B, g: B → C, h: C → D):
+    Eq (A → D) (compose3.right-assocd A B C D f g h) (compose3.left-assocd A B C D f g h)
+{
+    POINTWISE A D
+        (compose3.right-assocd A B C D f g h) (compose3.left-assocd A B C D f g h)
+        [x: A] Eq.refl (A → D) (f (g (h x)))
+}
+
+def compose3(A B C D: Type, f: A → B, g: B → C, h: C → D): A → D {
+    compose3.left-assoc A B C D f g h
+}
+
+// -------------------------------------------------------------------------------------------------
+
+def substitute-domain(A A' B: Type, p: Eq A A', f: A → B): A' → B {
+    Eq.transport (A → B) (A' → B) (Eq.congrue Type A A' p ([A*: Type] A* → B)) f
+}
+
+def substitute-codomain(A B B': Type, p: Eq B B', f: A → B): A → B' {
+    Eq.transport (A → B) (A → B') (Eq.congrue Type B B' p ([B*: Type] A → B*)) f
+}
+
+def substitute-both-sides(A A' B B': Type, p: Eq A A', q: Eq B B', f: A → B): A' → B' {
+    substitute-codomain A B B' q (substitute-domain A A' B p f)
+}
+
+// -------------------------------------------------------------------------------------------------
+
+def id(A: Type): A → A {
+    [a: A] a
+}
+
+def id.is-left-id(A B: Type, f: A → B): Eq (A → B) (>> A B (id A) f) f {
+    Eq.refl (A → B) f
+}
+
+def id.is-right-id(A B: Type, f: A → B): Eq (A → B) (>> A B f (id B)) f {
+    Eq.refl (A → B) f
+}
+
+
+// -------------------------------------------------------------------------------------------------
+
+def IsConstant(A B: Type, f: A → B): Type {
+    (x x': A) → Eq B (f x) (f x')
+}
+
+def IsFixed(A: Type, f: A → A): Type {
+    Eq a (f x) x
+}
+
+def AgreeOn(A B: Type, f g: A → B, P: Subset A): Type {
+    (x: A, ∈ A P x) → Eq B (f x) (g x)
+}
+
+def restrict(A B: Type, f: A → B, P: Subset A): (Subtype A P) → B {
+    [p: Subtype A P] f (Subtype.inner p)
+}
+
+// -------------------------------------------------------------------------------------------------
+
+def IsInjective(A B: Type, f: A → B): Type {
+    (x y: A, x≠y: Not (Eq A x y)) → (Not (Eq B (f x) (f y)))
+}
+
+def IsInjective.ByContrapositive(A B: Type, f: A → B): Type {
+    (x y: A, fx=fy: Eq B (f x) (f y)) → Eq A x y
+}
+
+def IsSurjective(A B: Type, f: A → B): Type {
+    (y: B) → Product A [x: A] (Eq B (f x) y)
+}
+
+struct IsBijective(A B: Type, f: A → B): Type {
+    is-injective: IsInjective A B f,
+    is-surjective: IsSurjective A B f,
+}
+
+struct Injection(A B: Type): Type {
+    map: A → B,
+    map-is-injective: Merely (IsInjective A B map),
+}
+
+struct Surjection(A B: Type): Type {
+    map: A → B,
+    map-is-surjective: Merely (IsSurjective A B map),
+}
+
+struct Bijection(A B: Type): Type {
+    map: A → B,
+    map-is-bijective: Merely (IsBijective A B map),
+}

@@ -1,0 +1,52 @@
+def contrapositive(A B: Type, f: A → B): (Not B) → (Not A) {
+    [¬B: Not B] [a: A] ¬B (f a)
+}
+
+def double-neg(A: Type): A → (Not (Not A)) {
+    [a: A] [¬A: Not A] ¬A a
+}
+
+axiom DECIDE: (A: Type) → Either A (Not A);
+
+def by-contradiction(A: Type, ¬¬A: Not (Not A)): A {
+    match DECIDE A to [-] A {
+        left a => a,
+        right ¬A => False.ex-falso A (¬¬A ¬A),
+    }
+}
+
+def contrapositive-double-neg(A B: Type, f: (Not A) → (Not B)): B → A {
+    Map.compose3 B (Not (Not B)) (Not (Not A)) A
+        (double-neg B)
+        (contrapositive (Not A) (Not B) f)
+        (by-contradiction A)
+}
+
+struct Iff(A B: Type): Type {
+    only-if: A → B,
+    if: B → A,
+}
+
+def Iff.converse(A B: Type, f: Iff A B): Iff (Not A) (Not B) {
+    Iff.make {
+        only-if: contrapositive B A (Iff.if f),
+        if: contrapositive A B (Iff.only-if f),
+    }
+}
+
+def Iff.converse-double-neg(A B: Type, f: Iff (Not A) (Not B)): Iff A B {
+    Iff.make {
+        only-if: contrapositive-double-neg B A (Iff.if (Not A) (Not B) f),
+        if: contrapositive-double-neg A B (Iff.only-if (Not B) (Not A) f),
+    }
+}
+
+def de-morgan(A B: Type): Iff (Not (Pair A B)) (Either (Not A) (Not B)) {
+    let if = [¬A|¬B: Either (Not A) (Not B)] [pair: Pair A B]
+        match ¬A|¬B {
+            left ¬A => ¬A (Pair.first A B pair),
+            right ¬B => ¬B (Pair.second A B pair),
+        };
+
+    let only-if = [¬A&B: Not (Pair A B)] 
+}

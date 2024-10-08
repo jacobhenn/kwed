@@ -11,7 +11,7 @@ use chumsky::Parser;
 use codespan_reporting::files::SimpleFiles;
 use indexmap::IndexMap;
 
-use tracing::{debug, instrument};
+use tracing::{debug, instrument, trace};
 
 use ulid::Ulid;
 
@@ -247,16 +247,46 @@ impl Expr {
 }
 
 fn desugar_struct(
-    path: Path,
+    struct_path: Path,
     not: &HashMap<String, Expr>,
     mod_name: &Ident,
-    params: Params,
-    ty: Expr,
-    fields: Option<Vec<(Ident, Expr)>>,
+    struct_def_params: Params,
+    struct_def_ty: Expr,
+    struct_def_fields: Option<Vec<(Ident, Expr)>>,
 ) -> Result<Vec<(Path, desugared::Item)>> {
-    todo!()
-    /* let fields = fields.expect("error nodes should not make it to desugaring");
+    // The canonical example used in this function's comments will be the following struct:
+    //
+    // ```kwed
+    // struct Pair(A: Type, B: A → Type): Type {
+    //     first: A,
+    //     second: B first,
+    // }
+    // ```
+    //
+    // which should desugar to the following code:
+    //
+    // ```kwed
+    // inductive Pair(A: Type, B: A → Type): Type {
+    //     make: (first: A, second: B first) → Pair A B,
+    // }
+    //
+    // def Pair.first(A: Type, B: A → Type, pair: Pair A B): A {
+    //     match pair to [pair] A {
+    //         make first second => first,
+    //     }
+    // }
+    //
+    // def Pair.second(A: Type, B: A → Type, pair: Pair A B): B (Pair.first A B pair) {
+    //     match pair to [pair] B (Pair.first A B pair) {
+    //         make first second => second,
+    //     }
+    // }
+    // ```
 
+    // the fields of the struct: `first: A, second: B first`
+    let fields = struct_def_fields.expect("error nodes should not make it to desugaring");
+
+    // the parameters of the `make` constructor: `(first: A, second: B first)`
     let make_params = fields
         .iter()
         .cloned()
@@ -266,58 +296,133 @@ fn desugar_struct(
         })
         .collect::<Result<Vec<_>>>()?;
 
-    let desugared_params: Vec<BindingParam> = params.desugared(not, mod_name)?;
+    let desugared_struct_def_params: Vec<BindingParam> =
+        struct_def_params.desugared(not, mod_name)?;
 
-    let make_ty = path
+    // the type of the `make` constructor: `(first: A, second: B first) → Pair A B`
+    let make_ty = struct_path
         .clone()
         .to_expr()
-        .with_args(desugared_params.iter().cloned().map(BindingParam::to_var));
+        .with_args(
+            desugared_struct_def_params
+                .iter()
+                .cloned()
+                .map(BindingParam::to_var),
+        )
+        .with_fn_ty_params(make_params);
 
+    let make_ident = Ident::from_str("make");
+
+    // the inductive definition of the struct:
+    // ```kwed
+    // inductive Pair(A: Type, B: A → Type): Type {
+    //     make: (first: A, second: B first) → Pair A B,
+    // }
+    // ```
     let ind_def = desugared::Item::Inductive {
-        params: desugared_params.clone(),
-        ty: ty.desugared(not, mod_name)?,
-        constructors: vec![(Ident::from_str("make"), make_ty)],
+        params: desugared_struct_def_params.clone(),
+        ty: struct_def_ty.desugared(not, mod_name)?,
+        constructors: vec![(make_ident.clone(), make_ty)],
     };
 
-    let mut ret = vec![(path, ind_def)];
+    let mut ret = vec![(struct_path.clone(), ind_def)];
 
-    let mut getter_params = desugared_params;
+    // -- emit getter functions
 
-    let getter_final_param_id = Ulid::new_v4();
-    getter_params.push(
-        BindingParam::blank(
-            path.clone()
-                .to_expr()
-                .with_args(getter_params.iter().cloned().map(BindingParam::to_var)),
-        )
-        .with_id(getter_final_param_id),
-    );
+    // the parameters of our struct, converted to variables for easy application: `A B`
+    let param_vars = desugared_struct_def_params
+        .iter()
+        .cloned()
+        .map(BindingParam::to_var);
 
-    let elim_cod = make_ty.with_fn_params(desugared_params.iter().cloned());
+    // the final parameter of all getters: `Pair A B`
+    let getter_final_param =
+        BindingParam::blank(struct_path.clone().to_expr().with_args(param_vars.clone()));
 
-    for (field_name, field_ty) in fields {
-        let getter_path = path.with_suffix(field_name);
+    // the parameters of all getters: `A: Type, B: A → Type, pair: Pair A B`
+    let getter_params = desugared_struct_def_params
+        .iter()
+        .cloned()
+        .chain([getter_final_param.clone()]);
 
-        let getter_ty = field_ty
-            .desugared(not, mod_name)?
-            .with_fn_ty_params(getter_params.iter().cloned());
+    let prepend_struct_path = |name: &Ident| struct_path.clone().with_suffix(name.clone());
 
-        let getter_body = path
-            .with_suffix(Ident::from_str("elim"))
-            .to_expr()
-            .with_args(getter_params.iter().cloned().map(BindingParam::to_var))
-            .with_arg();
-        let getter_val = getter_body.with_fn_params(getter_params.iter().cloned());
+    for (field_idx, (field_name, field_ty)) in fields.iter().enumerate() {
+        // for this part of the comments, we'll focus on the second field of the struct,
+        // ```
+        //     second: B first,
+        // ```
+        // so the variables captured in this loop would be:
+        //     field_name: "second",
+        //     field_ty: `B first`
+        //
+        // remember that the getter we're trying to generate is:
+        //
+        // ```
+        // def Pair.second(A: Type, B: A → Type, pair: Pair A B): B (Pair.first A B pair) {
+        //     match pair to [pair] B (Pair.first A B pair) {
+        //         make first second => second,
+        //     }
+        // }
+        // ```
+
+        let desugared_field_ty = field_ty.clone().desugared(not, mod_name)?;
+
+        // the return type of this getter: B (Pair.first A B pair)
+        let mut getter_ret_ty = desugared_field_ty.clone();
+        for name in fields.iter().map(|(name, _ty)| name) {
+            trace!("  replacing `{name}`");
+            getter_ret_ty.replace(
+                &|expr: &desugared::Expr| expr.is_path_to_ident(name),
+                &prepend_struct_path(name)
+                    .clone()
+                    .to_expr()
+                    .with_args(param_vars.clone())
+                    .with_arg(getter_final_param.clone().to_var()),
+            );
+        }
+
+        trace!("getter_ret_ty for {}: {}", field_name, getter_ret_ty);
+
+        // the type of this getter: `(A: Type, B: A → Type, pair: Pair A B) → getter_ret_ty`
+        let getter_ty = getter_ret_ty
+            .clone()
+            .with_fn_ty_params(getter_params.clone());
+
+        let match_cod_par_id = Ulid::new();
+
+        let cons_args: Vec<_> = desugared_struct_def_params
+            .iter()
+            .cloned()
+            .map(|_| (Ident::blank(), Ulid::new()))
+            .collect();
+
+        let getter_body = getter_final_param.clone().to_var().matched(
+            [(Ident::blank(), match_cod_par_id)],
+            getter_ret_ty.with_substitution(
+                getter_final_param.id,
+                desugared::Expr::var(match_cod_par_id, Ident::blank()),
+            ),
+            [desugared::Arm {
+                constructor: make_ident.clone(),
+                cons_args: cons_args.clone(),
+                body: desugared::Expr::var(cons_args[field_idx].1, Ident::blank()),
+            }],
+        );
+
+        println!("desugar_struct: getter_body: {getter_body}");
+
+        let getter_val = getter_body.with_fn_params(getter_params.clone());
 
         let getter_def = desugared::Item::Def {
             ty: getter_ty,
             val: getter_val,
         };
 
-        ret.push((getter_path, getter_def));
+        ret.push((prepend_struct_path(field_name).clone(), getter_def));
     }
 
-    Ok(ret) */
+    Ok(ret)
 }
 
 impl Item {

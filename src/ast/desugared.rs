@@ -242,6 +242,18 @@ impl Arm {
     pub fn span(&self) -> Option<Span> {
         Span::hull_opts(self.constructor.span.clone(), self.body.span())
     }
+
+    pub fn new(
+        constructor: Ident,
+        cons_args: impl IntoIterator<Item = (Ident, Ulid)>,
+        body: Expr,
+    ) -> Self {
+        Self {
+            constructor,
+            cons_args: cons_args.into_iter().collect(),
+            body,
+        }
+    }
 }
 
 impl Display for Arm {
@@ -388,6 +400,21 @@ impl Expr {
         })
     }
 
+    pub fn matched(
+        self,
+        cod_pars: impl IntoIterator<Item = (Ident, Ulid)>,
+        cod_body: Self,
+        arms: impl IntoIterator<Item = Arm>,
+    ) -> Self {
+        Self::Match {
+            arg: Rc::new(self),
+            cod_pars: cod_pars.into_iter().collect(),
+            cod_body: Rc::new(cod_body),
+            arms: arms.into_iter().collect(),
+            span: None,
+        }
+    }
+
     pub fn is_type_type(&self) -> bool {
         match self {
             Self::TypeType { .. } => true,
@@ -528,6 +555,19 @@ impl Expr {
     pub fn is_path_to(&self, desired_path: &Path) -> bool {
         if let Self::Path { path, .. } = self {
             path == desired_path
+        } else {
+            false
+        }
+    }
+
+    pub fn is_path_to_ident(&self, ident: &Ident) -> bool {
+        if let Self::Path {
+            path: Path { components },
+            ..
+        } = self
+            && let [component] = &components[..]
+        {
+            component == ident
         } else {
             false
         }

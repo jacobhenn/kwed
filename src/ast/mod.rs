@@ -48,11 +48,9 @@ impl Ident {
         Self::from_str("●")
     }
 
-    pub fn from_id(id: Ulid) -> Self {
-        let encoded = BASE64_STANDARD.encode(&id.to_bytes()[..3]);
-
-        Self::new(encoded)
-    }
+    // pub fn from_id(id: Ulid) -> Self {
+    //     Self::new(id.to_string())
+    // }
 
     pub fn to_expr(self) -> desugared::Expr {
         Path::new(vec![self]).to_expr()

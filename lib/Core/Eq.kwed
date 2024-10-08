@@ -1,25 +1,35 @@
 // Equality
-inductive =(A: Type, x: A): (y: A) → Type {
-    refl: = A x x,
+inductive Eq(A: Type, x: A): (y: A) → Type {
+    refl: Eq A x x,
 }
 
+def =(A: Type, x y: A): Type { Eq A x y }
+
 // Congruence of equality: any function may be applied to both sides of an equation
-def =.cong(A B: Type, f: A → B, x y: A, p: = A x y): = B (f x) (f y) {
-    match p to [y _] = B (f x) (f y) {
-        refl => =.refl B (f x)
+def Eq.congrue(A B: Type, f: A → B, x y: A, p: Eq A x y): Eq B (f x) (f y) {
+    match p to [y -] Eq B (f x) (f y) {
+        refl => Eq.refl B (f x)
     }
 }
 
 // Transitivity of equality: if x=y and y=z, then x=z
-def =.compose(A: Type, x y z: A, p: = A x y, q: = A y z): = A x z {
-    match q to [z _] = A x z {
+def Eq.compose(A: Type, x y z: A, p: Eq A x y, q: Eq A y z): Eq A x z {
+    match q to [z -] Eq A x z {
         refl => p,
     }
 }
 
 // Symmetry of equality: if x=y, the y=x
-def =.inv(A: Type, x y: A, p: = A x y): = A y x {
-    match p to [y _] = A y x {
-        refl => =.refl A x,
+def Eq.commute(A: Type, x y: A, p: Eq A x y): Eq A y x {
+    match p to [y -] Eq A y x {
+        refl => Eq.refl A x,
     }
 }
+
+def Eq.transport(A B: Type, p: Eq Type A B): A → B {
+    match p to [B -] A → B {
+        refl => Map.id A,
+    }
+}
+
+def Neq(A: Type, x y: A): Type { Not (Eq A x y) }

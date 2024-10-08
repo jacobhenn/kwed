@@ -1,5 +1,0 @@
-use { Lib.Core.False.{False, Not} }
-
-def contrapositive(A B: Type, A→B: A → B): (Not B) → (Not A) {
-    [¬B: Not B, a: A] ¬B (A→B a)
-}

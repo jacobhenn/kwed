@@ -33,7 +33,7 @@ const RESERVED_IDENTS: &[&str] = &[
     "struct",
     "Type",
     "let",
-    "module",
+    "mod",
     "use",
     "notation",
     "=>",
@@ -261,6 +261,7 @@ impl Item {
     pub fn parse(file_id: usize) -> impl Parser<char, (Path, Self), Error = Simple<char>> {
         choice((
             Self::parse_def(file_id),
+            Self::parse_struct(file_id),
             Self::parse_axiom(file_id),
             Self::parse_inductive(file_id),
         ))

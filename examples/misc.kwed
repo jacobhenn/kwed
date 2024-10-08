@@ -1,14 +1,23 @@
 notation number-0 { ℕ.0 }
 notation number-suc { ℕ.suc }
 
-inductive =(A: Type, x: A): A → Type {
-	refl: = A x x,
+inductive Eq(A: Type, x: A): A → Type {
+	refl: Eq A x x,
 }
 
 inductive ℕ: Type 0 {
 	0: ℕ,
 	suc: ℕ → ℕ,
 }
+
+def +(n m: ℕ): ℕ {
+	match m to [-] ℕ {
+		0 => n,
+		suc m' => ℕ.suc (rec m'),
+	}
+}
+
+def 10+14=24: Eq ℕ (+ 10 14) 24 { Eq.refl ℕ 24 }
 
 inductive Vec(A: Type): ℕ → Type {
 	nil: Vec A 0,
@@ -22,15 +31,6 @@ def Vec.prepend(A: Type, n: ℕ, v: Vec A n, a: A): Vec A (ℕ.suc n) {
 	}
 }
 
-// def Vec.prepend-elim(A: Type, n: ℕ, v: Vec A n, a: A): Vec A (ℕ.suc n) {
-// 	Vec.elim A ([n: ℕ, v: Vec A n] Vec A (ℕ.suc n))
-// 		(Vec.cons A 0 (Vec.nil A) a)
-// 		([n': ℕ, v': Vec A n', a': A, v'_rec: Vec A (ℕ.suc n')]
-// 		    Vec.cons A (ℕ.suc n') v'_rec a'
-// 		)
-// 		n v
-// }
-
 def just_1: Vec ℕ 1 {
 	Vec.cons ℕ 0 (Vec.nil ℕ) 1
 }
@@ -43,6 +43,6 @@ def just_1_2: Vec ℕ 2 {
 	Vec.cons ℕ 1 just_1 2
 }
 
-def just_1_2=prepend_1_just_2: = (Vec ℕ 2) just_1_2 (Vec.prepend ℕ 1 just_2 1) {
-	=.refl (Vec ℕ 2) just_1_2
+def just_1_2=prepend_1_just_2: Eq (Vec ℕ 2) just_1_2 (Vec.prepend ℕ 1 just_2 1) {
+	Eq.refl (Vec ℕ 2) just_1_2
 }

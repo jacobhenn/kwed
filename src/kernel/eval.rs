@@ -12,27 +12,26 @@ use tracing::{instrument, trace};
 use ulid::Ulid;
 
 impl Expr {
-    pub fn substitute(&mut self, target_id: Ulid, sub: &Expr) {
+    pub fn replace(&mut self, is_target: &impl Fn(&Expr) -> bool, sub: &Expr) {
+        if is_target(self) {
+            *self = sub.clone();
+        }
+
         match self {
-            Expr::TypeType { .. } | Expr::Rec { .. } => (),
-            Expr::Displace { arg, .. } => Rc::make_mut(arg).substitute(target_id, sub),
-            Expr::Var { id, .. } => {
-                if *id == target_id {
-                    *self = sub.clone()
-                }
-            }
+            Expr::TypeType { .. } | Expr::Rec { .. } | Expr::Var { .. } => (),
+            Expr::Displace { arg, .. } => Rc::make_mut(arg).replace(is_target, sub),
             Expr::Path { .. } => (),
             Expr::Fn { param, body, .. } => {
-                Rc::make_mut(param).ty.substitute(target_id, sub);
-                Rc::make_mut(body).substitute(target_id, sub);
+                Rc::make_mut(param).ty.replace(is_target, sub);
+                Rc::make_mut(body).replace(is_target, sub);
             }
             Expr::FnType { param, cod, .. } => {
-                Rc::make_mut(param).ty.substitute(target_id, sub);
-                Rc::make_mut(cod).substitute(target_id, sub);
+                Rc::make_mut(param).ty.replace(is_target, sub);
+                Rc::make_mut(cod).replace(is_target, sub);
             }
             Expr::FnApp { func, arg, .. } => {
-                Rc::make_mut(func).substitute(target_id, sub);
-                Rc::make_mut(arg).substitute(target_id, sub);
+                Rc::make_mut(func).replace(is_target, sub);
+                Rc::make_mut(arg).replace(is_target, sub);
             }
             Expr::Match {
                 arg,
@@ -40,13 +39,17 @@ impl Expr {
                 arms,
                 ..
             } => {
-                Rc::make_mut(arg).substitute(target_id, sub);
-                Rc::make_mut(cod_body).substitute(target_id, sub);
+                Rc::make_mut(arg).replace(is_target, sub);
+                Rc::make_mut(cod_body).replace(is_target, sub);
                 for arm in arms {
-                    arm.body.substitute(target_id, sub);
+                    arm.body.replace(is_target, sub);
                 }
             }
         }
+    }
+
+    pub fn substitute(&mut self, target_id: Ulid, sub: &Expr) {
+        self.replace(&|expr| expr.is_var_with_id(target_id), sub)
     }
 
     pub fn substitute_many<'a>(
@@ -71,6 +74,17 @@ impl Expr {
     ) -> Self {
         for (target_id, sub) in iter::zip(target_ids, subs) {
             self.substitute(target_id, &sub);
+        }
+        self
+    }
+
+    pub fn with_replacements<'a>(
+        mut self,
+        targets: impl IntoIterator<Item = &'a dyn Fn(&Self) -> bool>,
+        subs: impl IntoIterator<Item = Expr>,
+    ) -> Self {
+        for (target, sub) in iter::zip(targets, subs) {
+            self.replace(&target, &sub);
         }
         self
     }
@@ -105,6 +119,8 @@ impl Expr {
 
     #[instrument(level = "trace", skip(self, md, ctx), fields(self = %self, ctx = %ctx))]
     pub fn eval(&mut self, md: &Module, ctx: &Context, depth: usize) -> Result<()> {
+        println!("{blank:|>align$}eval: {self}", blank = "", align = depth);
+
         if let Some(max_depth) = md.directives.max_recursion_depth
             && depth > max_depth
         {
@@ -226,13 +242,14 @@ impl Expr {
                 *self = res;
             }
             Expr::Rec { arg_id, .. } => {
-                if let Some(rec_val) = ctx.val_of_rec(*arg_id) {
-                    *self = rec_val.clone();
+                if let Some(mut rec_val) = ctx.val_of_rec(*arg_id).cloned() {
+                    rec_val.eval(md, ctx, depth + 1)?;
+                    *self = rec_val;
                 }
             }
         }
 
-        trace!("result: {self}");
+        println!("{blank:|>depth$}|-> {self}", blank = "");
 
         Ok(())
     }
@@ -240,6 +257,8 @@ impl Expr {
 
 impl Item {
     pub fn eval(&mut self, md: &mut Module) -> Result<()> {
+        println!("eval: {self}");
+
         match self {
             Item::Def { ty, val, .. } => {
                 ty.eval(md, &Context::Empty, 0)?;

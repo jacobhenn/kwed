@@ -1,0 +1,72 @@
+// Uniqueness means specifically that any two elements of a type are equal. This *does not* imply
+// that the type is inhabited; see False.unique.
+def IsUnique(A: Type): Type
+    (x y: A) → Eq A x y,
+}
+
+def map-to-unique-is-unique(A B: Type, B-unique: IsUnique B): IsUnique (A → B) {
+    [f g: A → B] POINTWISE A B f g [x: A] B-unique (f x) (g x)
+}
+
+struct Prop: Type {
+    Ty: Type,
+    Ty-unique: IsUnique Ty,
+}
+
+// Takes a type and turns it into a mere proposition which contains only the data of whether the
+// type is inhabited or not, forgetting all other internal structure.
+def Merely(A: Type): Type {
+    Not (Not A)
+}
+
+def Merely.make(A: Type, a: A): Merely A {
+    Logic.double-neg A a
+}
+
+def Merely.is-unique(A: Type): IsUnique (Merely A) {
+    map-to-unique-is-unique (Not A) False False.unique,
+}
+
+def Forall(A: Type, B: A → Type): Type {
+    Merely ((a: A) → B a)
+}
+
+def Forall.make(A: Type, B: A → Type, f: (a: A) → B a): Forall A B {
+    Merely.make (Forall A B) f
+}
+
+def ∀(A: Type, B: A → Type): Type {
+    Forall A B
+}
+
+def Exists(A: Type, B: A → Type): Type {
+    Merely (Product A B)
+}
+
+def Exists.make(A: Type, B: A → Type, a: A, b: B a): Exists A B {
+    Merely.make (Exists A B) (Product.make A B a b)
+}
+
+def ∃(A: Type, B: A → Type): Prop { Exists A B }
+
+// -------------------------------------------------------------------------------------------------
+
+struct Subset(A: Type): Type {
+    In: A → Type,
+    In-unique: (a: A) → IsUnique (In a),
+}
+
+def Subset.∈(A: Type, P: Subset A): A → Type {
+    Subset.In A P x
+}
+
+struct SubtypeElem(A: Type, P: Subset A): Type {
+    inner: A,
+    inner-in-subset: (Subset.In A P),
+}
+
+def Subtype.inner.is-injective(A: Type, P: Subset A): IsInjective (SubtypeElem.inner A P) {
+    [x y: SubtypeElem A P, x≠y: Not (Eq (SubtypeElem A P) x y)]
+        [xi=yi: Eq A (SubtypeElem.inner x) (SubtypeElem.inner y)]
+
+}

@@ -10,7 +10,7 @@ use crate::{
     kernel::context::Context,
 };
 
-use tracing::{instrument, trace};
+use tracing::trace;
 
 use ulid::Ulid;
 
@@ -352,7 +352,6 @@ impl SynEqCtx {
 }
 
 impl Expr {
-    #[instrument(level = "trace", skip_all, fields(lhs = %lhs, rhs = %rhs, ret))]
     fn syn_eq_impl(lhs: &Self, rhs: &Self, ctx: &SynEqCtx, dvs: &Directives) -> bool {
         match (lhs, rhs) {
             (Expr::TypeType { level: ll, .. }, Expr::TypeType { level: rl, .. }) => {
@@ -469,7 +468,6 @@ impl Expr {
         Self::syn_eq_impl(lhs, rhs, &SynEqCtx::Empty, dvs)
     }
 
-    #[instrument(level = "trace", skip(md, ctx), fields(self = %self, expected = %expected))]
     fn expect_ty(&self, expected: &Self, md: &Module, ctx: &Context, depth: usize) -> Result<()> {
         let expected_ty = expected.ty(md, ctx, depth + 1)?;
         if !expected_ty.is_type_type() {
@@ -477,11 +475,11 @@ impl Expr {
         }
 
         let mut expected_evald = expected.clone();
-        expected_evald.eval(md, ctx, 0)?;
+        expected_evald.eval(md, ctx, depth + 1)?;
 
         let found = self.ty(md, ctx, depth + 1)?;
         let mut found_evald = found.clone();
-        found_evald.eval(md, ctx, 0)?;
+        found_evald.eval(md, ctx, depth + 1)?;
 
         if let Expr::TypeType {
             level: found_level, ..
@@ -507,10 +505,9 @@ impl Expr {
         )
     }
 
-    #[instrument(level = "trace", skip_all, fields(self = %self))]
     fn expect_ty_ty(&self, md: &Module, ctx: &Context, depth: usize) -> Result<usize> {
         let mut found = self.ty(md, ctx, depth + 1)?;
-        found.eval(md, ctx, 0)?;
+        found.eval(md, ctx, depth + 1)?;
 
         match found {
             Expr::TypeType { level, .. } => Ok(level),
@@ -519,8 +516,9 @@ impl Expr {
     }
 
     // TODO: verify assumption that this returns exprs in normal form
-    #[instrument(level = "trace", skip(self, md, ctx), fields(self = %self, ctx = %ctx))]
     pub fn ty(&self, md: &Module, ctx: &Context, depth: usize) -> Result<Self> {
+        println!("{blank:|>depth$}ty: {self}", blank = "");
+
         if let Some(max_depth) = md.directives.max_recursion_depth
             && depth > max_depth
         {
@@ -571,6 +569,7 @@ impl Expr {
                     bail!(span.clone(), "cannot find item `{path}` in this scope")
                 }
             }
+            // TODO: clean this up
             Self::Fn { param, body, .. } => {
                 param.ty.expect_ty_ty(md, ctx, depth + 1)?;
 
@@ -582,11 +581,7 @@ impl Expr {
 
                 let mut body = (**body).clone();
                 let new_id = Ulid::new();
-                let new_var = Expr::Var {
-                    id: new_id,
-                    name: param.name.clone(),
-                    span: None,
-                };
+                let new_var = (**param).clone().with_id(new_id).to_var();
                 body.substitute(param.id, &new_var);
                 cod.substitute(param.id, &new_var);
 
@@ -612,7 +607,7 @@ impl Expr {
             }
             Self::FnApp { func, arg, .. } => {
                 let mut func_type = func.ty(md, ctx, depth + 1)?;
-                func_type.eval(md, ctx, 0)?;
+                func_type.eval(md, ctx, depth + 1)?;
 
                 let Self::FnType { param, mut cod, .. } = func_type else {
                     bail!(
@@ -652,7 +647,7 @@ impl Expr {
             }
         };
 
-        trace!("return: {res}");
+        println!("{blank:|>depth$}|-> {res}", blank = "");
 
         Ok(res)
     }
@@ -671,6 +666,7 @@ fn expect_valid_inductive_def_ty(ty: &Expr) -> Result<()> {
 
 impl Item {
     pub fn ty(&self) -> Option<Expr> {
+        println!("ty: {self}");
         match self {
             Item::Def { ty, .. } | Item::Axiom { ty, .. } => Some(ty.clone()),
             Item::Inductive { params, ty, .. } => {
@@ -679,7 +675,6 @@ impl Item {
         }
     }
 
-    #[instrument(level = "trace", skip(self, md), fields(self = %self, path = %path))]
     pub fn type_check(&self, path: &Path, md: &Module) -> Result<()> {
         match self {
             Item::Def { ty, val, .. } => val.expect_ty(ty, md, &Context::Empty, 0)?,

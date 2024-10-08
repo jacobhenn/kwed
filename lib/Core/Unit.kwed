@@ -2,3 +2,17 @@
 inductive Unit: Type {
     0: Unit,
 }
+
+// Everything in `Unit` is equal to `Unit.0`
+def Unit.all-0(x: Unit): Eq Unit x Unit.0 {
+    match x to [-] Eq Unit x Unit.0 {
+        0 => Eq.refl Unit.0,
+    }
+}
+
+def Unit.unique: IsUnique Unit {
+    [x y: Unit]
+        Eq.compose Unit x Unit.0 y 
+            (Unit.all-0 x)
+            (Eq.commute Unit y Unit.0 (Unit.all-0 y))
+}

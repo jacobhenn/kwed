@@ -9,3 +9,7 @@ def False.ex-falso(A: Type, contradiction: False): A {
 def Not(A: Type): Type {
     A → False
 }
+
+def False.unique: IsUnique False {
+    [x y: False] match x to [-] IsUnique False {}
+}

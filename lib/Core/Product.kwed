@@ -1,37 +1,40 @@
 // Dependent product of a base type and a family over the base
-inductive Product(A: Type, B: A → Type): Type {
-    pair: (a: A, B a) → Product A B,
-}
-
-// Get the first element of a pair
-def Product.first(A: Type, B: A → Type, pair: Product A B): A {
-    match pair to [-] A {
-        pair a b => a,
-    }
-}
-
-// Get the second element of a pair
-def Product.second(A: Type, B: A → Type, pair: Product A B): B (Product.first A B pair) {
-    match pair to [pair] B (Product.first A B pair) {
-        pair a b => b,
-    }
+struct Product(A: Type, B: A → Type): Type {
+    first: A,
+    second: B first,
 }
 
 // Non-dependent Cartesian product of two types
-def ×(A B: Type): Type {
+def Pair(A B: Type): Type {
     Product A ([-: A] B)
 }
 
-def ×.uncurry(A B C: Type, f: (a: A, b: B) → C, pair: × A B): C {
+def Pair.make(A B: Type, a: A, b: B): Pair A B {
+    Product.make A ([-: A] B) a b
+}
+
+def Pair.uncurry(A B C: Type, f: (a: A, b: B) → C, pair: Pair A B): C {
     match pair to [-] C {
         pair a b => f a b,
     } 
 }
 
-def ×.first(A B: Type, ): (× A B) → A {
+def Pair.first(A B: Type, ): (Pair A B) → A {
     Product.first A ([-: A] B)
 }
 
-def ×.second(A B: Type, ): (× A B) → B {
+def Pair.second(A B: Type, ): (Pair A B) → B {
     Product.second A ([-: A] B)
+}
+
+def Pair.is-doubleton(A: Type, pair: Pair A A): Prop {
+    Eq A (Pair.first pair) (Pair.second pair)
+}
+
+def Pair.doubleton(A: Type, a: A): Pair A A {
+    Pair.make a a
+}
+
+def Pair.doubleton.is-injective(A: Type): IsInjective A (Pair A A) (Pair.doubleton A) {
+    
 }

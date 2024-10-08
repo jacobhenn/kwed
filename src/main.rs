@@ -22,7 +22,6 @@ use ast::{desugared, Ident};
 use clap::Parser as _;
 use codespan_reporting::files::SimpleFiles;
 use kernel::context::Context;
-use tracing::{debug, info, Level};
 
 #[derive(clap::Parser, Debug)]
 /// Type-checker for the kwed proof language (see https://github.com/jacobhenn/kwed).
@@ -36,19 +35,6 @@ struct Args {
 }
 
 fn main() -> anyhow::Result<()> {
-    let env_filter = tracing_subscriber::EnvFilter::builder()
-        .with_default_directive(Level::INFO.into())
-        .from_env()?;
-
-    tracing_subscriber::fmt()
-        .without_time()
-        .with_file(true)
-        .with_line_number(true)
-        .pretty()
-        .with_env_filter(env_filter)
-        .with_span_events(tracing_subscriber::fmt::format::FmtSpan::ENTER)
-        .init();
-
     let args = Args::parse();
 
     let mut files = SimpleFiles::new();
@@ -89,23 +75,15 @@ fn process_root_module(
 
     let mut desugared_module = module.desugared(&root_mod_name)?;
 
-    debug!("desugared module: {desugared_module}");
-
     desugared_module.bind_vars();
-
-    debug!("module with variables bound: {desugared_module}");
 
     desugared_module.load_submodules(&root_mod_name, path, files)?;
 
-    debug!("module with submodules loaded: {desugared_module}");
-
     desugared_module.topological_sort()?;
-
-    debug!("module with items topologically sorted: {desugared_module}");
 
     let checked_module = desugared_module.type_check_root()?;
 
-    info!("type checking successful");
+    println!("type checking successful");
 
     Ok(checked_module)
 }

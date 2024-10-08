@@ -1,0 +1,12 @@
+struct Pair(A: Type, B: A → Type): Type {
+    first: A,
+    second: B first,
+}
+
+def ck_first(A: Type, B: A → Type, pair: Pair A B): A {
+    Pair.first A B pair
+}
+
+def ck_second(A: Type, B: A → Type, pair: Pair A B): B (Pair.first A B pair) {
+    Pair.second A B pair
+}

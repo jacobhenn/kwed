@@ -1,0 +1,78 @@
+inductive Eq(A: Type, x: A): (y: A) → Type {
+    refl: Eq A x x,
+}
+
+def Eq.congrue(A B: Type, f: A → B, x y: A, p: Eq A x y): Eq B (f x) (f y) {
+    match p to [y _] Eq B (f x) (f y) {
+        refl => Eq.refl B (f x)
+    }
+}
+
+def Eq.compose(A: Type, x y z: A, p: Eq A x y, q: Eq A y z): Eq A x z {
+    match q to [z _] Eq A x z {
+        refl => p,
+    }
+}
+
+def Eq.commute(A: Type, x y: A, p: Eq A x y): Eq A y x {
+    match p to [y _] Eq A y x {
+        refl => Eq.refl A x,
+    }
+}
+
+inductive Nel(A: Type): Type {
+    single: A → Nel A,
+    cons: (A, Nel A) → Nel A,
+}
+
+def Nel.concat(A: Type, l r: Nel A): Nel A {
+    match l to [-] Nel A {
+        single a => Nel.cons A a r,
+        cons a as => Nel.cons A a (rec as),
+    }
+}
+
+inductive Tree(A: Type): Type {
+    leaf: A → Tree A,
+    branch: (Tree A, Tree A) → Tree A,
+}
+
+def Nel.left-tree(A: Type, l: Nel A): Tree A {
+    match l to [-] Tree A {
+        single a => Tree.leaf A a,
+        cons a as => Tree.branch A (Tree.leaf A a) (rec as),
+    }
+}
+
+def Tree.leaves(A: Type, t: Tree A): Nel A {
+    match t to [-] Nel A {
+        leaf a => Nel.single A a,
+        branch l r => Nel.concat A (rec l) (rec r),
+    }
+}
+
+def Tree.fold(A: Type, f: (A, A) → A, t: Tree A): A {
+    match t to [-] A {
+        leaf a => a,
+        branch l r => f (rec l) (rec r),
+    }
+}
+
+def Tree.reassoc-left(A: Type, t: Tree A): Tree A {
+    match t to [-] Tree A {
+        leaf a => Tree.leaf A a,
+        branch l r => (rec l) (rec r)
+    }
+}
+
+// def Tree.fold-assoc(
+//     A: Type,
+//     f: (A, A) → A,
+//     f-assoc: (a b c: A) → Eq A (f a (f b c)) (f (f a b) c),
+//     t: Tree A,
+// ): Eq A (Tree.fold A f t) (Tree.fold A f (Nel.left-tree A (Tree.leaves A t))) {
+//     match t to [t] Eq A (Tree.fold A f t) (Tree.fold A f (Nel.left-tree A (Tree.leaves A t))) {
+//         leaf a => Eq.refl A a,
+//         branch l r => Type,
+//     }
+// }
