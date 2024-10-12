@@ -1,6 +1,6 @@
 use crate::{ast::sugared, bail, err::Result};
 
-use super::{Directives, Ident, Path, Span};
+use super::{Ident, Path, Span};
 
 use std::{fmt::Display, mem, rc::Rc};
 
@@ -18,14 +18,6 @@ pub enum Expr {
         span: Option<Span>,
     },
 
-    Displace {
-        amount: usize,
-        arg: Rc<Self>,
-        span: Option<Span>,
-    },
-
-    // TODO: `Var` and `Path` may not need to store a span, since they are already stored in their
-    // contents.
     Var {
         id: Ulid,
         name: Ident,
@@ -33,6 +25,7 @@ pub enum Expr {
     },
     Path {
         path: Path,
+        level: usize,
         span: Option<Span>,
     },
 
@@ -147,7 +140,6 @@ pub enum Item {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Module {
-    pub directives: Directives,
     pub submodules: Vec<Ident>,
     pub items: IndexMap<Path, Item>,
 }
@@ -164,7 +156,6 @@ impl Display for Expr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Expr::TypeType { level, .. } => write!(f, "Type {level}")?,
-            Expr::Displace { amount, arg, .. } => write!(f, "↑ {amount} {arg}")?,
             Expr::Var { id, name, .. } => {
                 write!(f, "{}", name.name.as_str().with(ulid_color(*id)))?
             }
@@ -316,6 +307,10 @@ impl Display for Module {
 }
 
 impl Expr {
+    pub fn rc(self) -> Rc<Self> {
+        Rc::new(self)
+    }
+
     pub fn type_type(level: usize) -> Self {
         Self::TypeType { level, span: None }
     }
@@ -427,9 +422,7 @@ impl Expr {
             | Self::Path { .. }
             | Self::Match { .. }
             | Self::Rec { .. } => true,
-            Self::Fn { .. } | Self::FnType { .. } | Self::FnApp { .. } | Self::Displace { .. } => {
-                false
-            }
+            Self::Fn { .. } | Self::FnType { .. } | Self::FnApp { .. } => false,
         }
     }
 
@@ -587,7 +580,6 @@ impl Expr {
     pub fn span(&self) -> Option<Span> {
         match self {
             Expr::TypeType { span, .. }
-            | Expr::Displace { span, .. }
             | Expr::Var { span, .. }
             | Expr::Path { span, .. }
             | Expr::Fn { span, .. }
@@ -601,7 +593,6 @@ impl Expr {
     pub fn span_mut(&mut self) -> &mut Option<Span> {
         match self {
             Expr::TypeType { span, .. }
-            | Expr::Displace { span, .. }
             | Expr::Var { span, .. }
             | Expr::Path { span, .. }
             | Expr::Fn { span, .. }
@@ -612,24 +603,22 @@ impl Expr {
         }
     }
 
-    pub fn displace_ty(&mut self, amount: usize) {
+    pub fn displace(&mut self, amount: usize) {
         match self {
-            Expr::Var { .. } | Expr::Path { .. } | Expr::Rec { .. } => (),
-            Expr::Displace { .. } => {
-                panic!("`displace` shouldn't encounter a `Displace` expression")
-            }
+            Expr::Var { .. } | Expr::Rec { .. } => (),
+            Expr::Path { level, .. } => *level += amount,
             Expr::TypeType { level, .. } => *level += amount,
             Expr::Fn { param, body, .. } => {
-                Rc::make_mut(param).ty.displace_ty(amount);
-                Rc::make_mut(body).displace_ty(amount);
+                Rc::make_mut(param).ty.displace(amount);
+                Rc::make_mut(body).displace(amount);
             }
             Expr::FnType { param, cod, .. } => {
-                Rc::make_mut(param).ty.displace_ty(amount);
-                Rc::make_mut(cod).displace_ty(amount);
+                Rc::make_mut(param).ty.displace(amount);
+                Rc::make_mut(cod).displace(amount);
             }
             Expr::FnApp { func, arg, .. } => {
-                Rc::make_mut(func).displace_ty(amount);
-                Rc::make_mut(arg).displace_ty(amount);
+                Rc::make_mut(func).displace(amount);
+                Rc::make_mut(arg).displace(amount);
             }
             Expr::Match {
                 arg,
@@ -637,10 +626,10 @@ impl Expr {
                 arms,
                 ..
             } => {
-                Rc::make_mut(arg).displace_ty(amount);
-                Rc::make_mut(cod_body).displace_ty(amount);
+                Rc::make_mut(arg).displace(amount);
+                Rc::make_mut(cod_body).displace(amount);
                 for arm in arms {
-                    arm.body.displace_ty(amount);
+                    arm.body.displace(amount);
                 }
             }
         }
@@ -651,9 +640,6 @@ impl Expr {
             Expr::Rec { .. } => (),
             Expr::Path { path, .. } => *path = path.clone().resolved_in(prefix),
             Expr::Var { .. } | Expr::TypeType { .. } => (),
-            Expr::Displace { .. } => {
-                panic!("`displace` shouldn't encounter a `Displace` expression")
-            }
             Expr::Fn { param, body, .. } => {
                 Rc::make_mut(param).ty.prefix_paths(prefix);
                 Rc::make_mut(body).prefix_paths(prefix);
@@ -685,7 +671,6 @@ impl Expr {
         match self {
             Expr::Rec { .. } => Vec::new(),
             Expr::TypeType { .. } | Expr::Var { .. } => Vec::new(),
-            Expr::Displace { arg, .. } => arg.dependencies(this_ind),
             Expr::Path { path, .. } => {
                 if let Some(ind_path) = this_ind
                     && ind_path == path
@@ -790,7 +775,6 @@ impl Item {
 impl Module {
     pub fn new() -> Self {
         Self {
-            directives: Directives::default(),
             submodules: Vec::new(),
             items: IndexMap::new(),
         }
@@ -811,7 +795,7 @@ impl Module {
 
         if dir_path.is_file() {
             match sugared::Module::load_from_file(&dir_path, files) {
-                Ok(module) => Ok((dir_path, module.desugared(&name)?)),
+                Ok(module) => Ok((dir_path, module.desugared(name)?)),
                 Err(e) => bail!(
                     name.span.clone(),
                     "failed to load module `{name}` from directory: {e}"
@@ -819,7 +803,7 @@ impl Module {
             }
         } else if file_path.is_file() {
             match sugared::Module::load_from_file(&file_path, files) {
-                Ok(module) => Ok((file_path, module.desugared(&name)?)),
+                Ok(module) => Ok((file_path, module.desugared(name)?)),
                 Err(e) => bail!(
                     name.span.clone(),
                     "failed to load module `{name}` from file: {e}"
@@ -913,7 +897,11 @@ impl Module {
 
         for path in item.dependencies(&path) {
             let Some(dependency_path) = self.get_dependency_path(&path) else {
-                bail!(path.span(), "item `{path}` not found in this scope")
+                bail!(
+                    path.span(),
+                    "`{}` not found in this scope",
+                    path.last_component()
+                )
             };
 
             self.topological_sort_visit(dependency_path, new_items, visited)?;

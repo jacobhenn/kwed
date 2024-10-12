@@ -1,15 +1,17 @@
+use { Super.Prop.Is-Unique }
+
 // The empty type.
 inductive False: Type {}
 
 // From a contradiction, anything follows. A non-dependent version of `False.elim`.
-def False.ex-falso(A: Type, contradiction: False): A {
-    match contradiction to [-] A {}
+def False.diverge(A: Type, contra: False): A {
+    match contra to [-] A {}
 }
 
 def Not(A: Type): Type {
     A → False
 }
 
-def False.unique: IsUnique False {
-    [x y: False] match x to [-] IsUnique False {}
+def False.is-unique: Is-Unique False {
+    [x y: False] match x to [-] Is-Unique False {}
 }

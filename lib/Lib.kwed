@@ -1,1 +1,1 @@
-mod { Core }
+mod { Core, Algebra }

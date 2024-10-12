@@ -13,21 +13,24 @@ use codespan_reporting::{
     },
 };
 
-fn convert_span(src: &str, mut span: Range<usize>) -> Range<usize> {
-    let start = src
-        .char_indices()
-        .skip(span.start.saturating_sub(1))
+fn convert_span_start(src: &str, span_start: usize) -> usize {
+    src.char_indices()
+        .skip(span_start.saturating_sub(1))
         .find(|(_, c)| !c.is_whitespace())
         .map(|(i, _)| i)
-        .unwrap_or(src.len());
+        .unwrap_or(src.len())
+}
 
-    while src.chars().nth(span.end - 1).unwrap().is_whitespace() {
-        span.end -= 1;
+fn convert_span_end(src: &str, mut span_end: usize) -> usize {
+    while src.chars().nth(span_end - 1).unwrap().is_whitespace() {
+        span_end -= 1;
     }
 
-    let end = src.char_indices().nth(span.end).unwrap().0;
+    src.char_indices().nth(span_end).unwrap().0
+}
 
-    start..end
+fn convert_span(src: &str, span: Range<usize>) -> Range<usize> {
+    convert_span_start(src, span.start)..convert_span_end(src, span.end)
 }
 
 #[derive(Debug)]
@@ -67,7 +70,8 @@ impl Error {
                 .expect("file id should be valid")
                 .source();
 
-            span.range = convert_span(src, span.range.clone());
+            span.start = convert_span_start(src, span.start);
+            span.end = convert_span_end(src, span.end);
         }
 
         for (span, _) in &mut self.labels {
@@ -77,7 +81,8 @@ impl Error {
                     .expect("file id should be valid")
                     .source();
 
-                span.range = convert_span(src, span.range.clone());
+                span.start = convert_span_start(src, span.start);
+                span.end = convert_span_end(src, span.end);
             }
         }
     }
@@ -88,12 +93,12 @@ impl Error {
         let mut labels = Vec::new();
 
         if let Some(span) = &self.span {
-            labels.push(Label::primary(span.file_id, span.range.clone()));
+            labels.push(Label::primary(span.file_id, span.start..span.end));
         }
 
         for (span, msg) in self.labels {
             if let Some(span) = span {
-                labels.push(Label::secondary(span.file_id, span.range.clone()).with_message(msg));
+                labels.push(Label::secondary(span.file_id, span.start..span.end).with_message(msg));
             }
         }
 

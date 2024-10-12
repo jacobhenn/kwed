@@ -18,26 +18,29 @@ use crate::ast::sugared;
 
 use std::{mem, path::PathBuf};
 
+use argh::FromArgs;
 use ast::{desugared, Ident};
-use clap::Parser as _;
 use codespan_reporting::files::SimpleFiles;
 use kernel::context::Context;
 
-#[derive(clap::Parser, Debug)]
+#[derive(FromArgs, Debug)]
 /// Type-checker for the kwed proof language (see https://github.com/jacobhenn/kwed).
 struct Args {
     /// path to the kwed module to type-check
+    #[argh(positional)]
     path: PathBuf,
 
+    // TODO: turn this into a subcommand
     /// print the type of an item in the given module. provide a fully qualified path
-    #[arg(short, long)]
+    #[argh(option)]
     type_of: Option<String>,
 }
 
 fn main() -> anyhow::Result<()> {
-    let args = Args::parse();
+    let args: Args = argh::from_env();
 
     let mut files = SimpleFiles::new();
+    files.add("[internally generated code]".to_string(), "");
 
     let module = sugared::Module::load_from_path(&args.path, &mut files)?;
 
@@ -57,7 +60,7 @@ fn main() -> anyhow::Result<()> {
         println!(
             "    {}",
             target_path
-                .to_expr()
+                .to_expr(0)
                 .ty(&checked_module, &Context::Empty, 0)
                 .expect("module should be type-checked")
         );

@@ -1,4 +1,5 @@
-use { Super.{Map, False.Not} }
+notation number-0 { ℕ.0 }
+notation number-suc { ℕ.suc }
 
 // Equality
 inductive Eq(A: Type, x: A): (y: A) → Type {
@@ -19,18 +20,25 @@ def Eq.compose(A: Type, x y z: A, p: Eq A x y, q: Eq A y z): Eq A x z {
     }
 }
 
-// Symmetry of equality: if x=y, then y=x
+// Symmetry of equality: if x=y, the y=x
 def Eq.commute(A: Type, x y: A, p: Eq A x y): Eq A y x {
     match p to [y -] Eq A y x {
         refl => Eq.refl A x,
     }
 }
 
-// HoTT Lemma 2.3.1
-def Eq.transport(A: Type, B: A → Type, x y: A, p: Eq A x y): (B x) → B y {
-    match p to [y -] (B x) → B y {
-        refl => Map.id B x,
-    }
+inductive ℕ: Type 0 {
+	0: ℕ,
+	suc: ℕ → ℕ,
 }
 
-def Neq(A: Type, x y: A): Type { Not (Eq A x y) }
+def +(n m: ℕ): ℕ {
+	match m to [-] ℕ {
+		0 => n,
+		suc m' => ℕ.suc (rec m'),
+	}
+}
+
+inductive Unit: Type {
+    0: Unit,
+}

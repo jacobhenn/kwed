@@ -1,0 +1,60 @@
+use { Lib.Core.Eq.Eq }
+
+def Is-Commutative(A: Type, op: (A, A) → A): Type {
+    (x y: A) → Eq A (op x y) (op y x)
+}
+
+def Is-Associative(A B: Type, op: (A, A) → A): Type {
+    (x y z: A) → Eq A (op (op x y) z) (op x (op y z))
+}
+
+def Compose-Is-Associative(
+    A: Type,
+    B: (A, A) → Type,
+    op: (x y z: A, f: B x y, g: B y z) → B x z,
+): Type {
+    (x y z w: A, f: B x y, g: B y z, h: B z w)
+        → Eq (B x z) (op x z w (op x y z f g) h) (op x y w f (op y w z g h))
+}
+
+def Is-Left-Identity(A: Type, op: (A, A) → A, id: A): Type {
+    (x: A) → Eq A (op id x) x
+}
+
+def Is-Right-Identity(A: Type, op: (A, A) → A, id: A): Type {
+    (x: A) → Eq A x (op id x)
+}
+
+struct Is-Identity(A: Type, op: (A, A) → A, id: A): Type {
+    is-left-id: Is-Left-Identity A op id,
+    is-right-id: Is-Right-Identity A op id,
+}
+
+def Compose-Is-Left-Identity(
+    A: Type,
+    B: (A, A) → A,
+    op: (x y z: A, f: B x y, g: B y z) → B x z,
+    id: (x: A) → B x x,
+): Type {
+    (w x: A, f: B w x) → Eq (B w x) f (op w x x f (id x))
+}
+
+def Compose-Is-Right-Identity(
+    A: Type,
+    B: (A, A) → A,
+    op: (x y z: A, f: B x y, g: B y z) → B x z,
+    id: (x: A) → B x x,
+): Type {
+    (x y: A, f: B x y) → Eq (B x y) f (op x x y (id x) f)
+}
+
+struct Compose-Is-Identity(
+    A: Type,
+    B: (A, A) → A,
+    op: (x y z: A, f: B x y, g: B y z) → B x z,
+    id: (x: A) → B x x,
+): Type {
+    is-left-id: Compose-Is-Left-Identity A B op id,
+    is-right-id: Compose-Is-Right-Identity A B op id,
+}
+

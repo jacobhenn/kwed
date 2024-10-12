@@ -3,7 +3,7 @@ use std::{cmp, collections::HashSet, iter, rc::Rc};
 use crate::{
     ast::{
         desugared::{Arm, BindingParam, Expr, Item, Module},
-        Directives, Ident, Path, Span,
+        Ident, Path, Span,
     },
     bail,
     err::Result,
@@ -65,10 +65,14 @@ fn match_ty(
     // evaluated so that we can match on type aliases
     arg_ty.eval(md, ctx, depth + 1)?;
 
+    let ind_ty = arg_ty.head();
+
     // the head of the scrutinee type; e.g. the type we are inducting over: `Vec`
-    let ind_ty @ Expr::Path {
-        path: ind_def_path, ..
-    } = arg_ty.head()
+    let Expr::Path {
+        path: ind_def_path,
+        level: arg_level,
+        ..
+    } = ind_ty
     else {
         bail!(
             arg.span(), "cannot match on non-inductive type `{}`", arg_ty.head();
@@ -95,6 +99,18 @@ fn match_ty(
             ind_ty
         );
     };
+
+    let mut ind_def_params = ind_def_params.clone();
+    let mut ind_def_ty = ind_def_ty.clone();
+    let mut ind_def_constructors = ind_def_constructors.clone();
+
+    for param in &mut ind_def_params {
+        param.ty.displace(*arg_level);
+    }
+    ind_def_ty.displace(*arg_level);
+    for (_name, ty) in &mut ind_def_constructors {
+        ty.displace(*arg_level);
+    }
 
     // the indices specified in the type of the inductive definition: `(●: ℕ)`
     let ind_def_indices = ind_def_ty.fn_ty_params().into_iter();
@@ -159,8 +175,8 @@ fn match_ty(
 
     // -- check exhaustivity
 
-    for (cons_name, _) in ind_def_constructors {
-        if !arms.iter().any(|arm| &arm.constructor == cons_name) {
+    for (cons_name, _) in &ind_def_constructors {
+        if !arms.iter().any(|arm| arm.constructor == *cons_name) {
             bail!(
                 match_span.clone(),
                 "non-exhaustive match: missing constructor `{cons_name}`";
@@ -254,7 +270,7 @@ fn match_ty(
         );
 
         // add recursible parameters to the arm context
-        for i in recursible_param_idxs(&ind_def_path, ind_def_params, cons_ty) {
+        for i in recursible_param_idxs(&ind_def_path, &ind_def_params, &cons_ty) {
             let (rec_cons_arg_name, rec_cons_arg_id) = &arm.cons_args[i];
 
             let rec_par_ty = cons_arg_tys
@@ -284,7 +300,7 @@ fn match_ty(
         let cod_final_arg = ind_def_path
             .clone()
             .with_suffix(arm.constructor.clone())
-            .to_expr()
+            .to_expr(*arg_level)
             .with_args(arg_par_vals.clone().cloned())
             .with_args(
                 arm.cons_args
@@ -348,15 +364,9 @@ impl SynEqCtx {
 }
 
 impl Expr {
-    fn syn_eq_impl(lhs: &Self, rhs: &Self, ctx: &SynEqCtx, dvs: &Directives) -> bool {
+    fn syn_eq_impl(lhs: &Self, rhs: &Self, ctx: &SynEqCtx) -> bool {
         match (lhs, rhs) {
-            (Expr::TypeType { level: ll, .. }, Expr::TypeType { level: rl, .. }) => {
-                if dvs.type_in_type {
-                    true
-                } else {
-                    ll == rl
-                }
-            }
+            (Expr::TypeType { level: ll, .. }, Expr::TypeType { level: rl, .. }) => ll == rl,
             (Expr::Var { id: lid, .. }, Expr::Var { id: rid, .. })
             | (Expr::Rec { arg_id: lid, .. }, Expr::Rec { arg_id: rid, .. }) => {
                 lid == rid || ctx.contains_pair([*lid, *rid])
@@ -374,12 +384,12 @@ impl Expr {
                     ..
                 },
             ) => {
-                if !Self::syn_eq_impl(&lparam.ty, &rparam.ty, ctx, dvs) {
+                if !Self::syn_eq_impl(&lparam.ty, &rparam.ty, ctx) {
                     return false;
                 }
 
                 let body_ctx = ctx.clone().with_pair([lparam.id, rparam.id]);
-                Self::syn_eq_impl(lbody, rbody, &body_ctx, dvs)
+                Self::syn_eq_impl(lbody, rbody, &body_ctx)
             }
             (
                 Expr::FnType {
@@ -393,12 +403,12 @@ impl Expr {
                     ..
                 },
             ) => {
-                if !Self::syn_eq_impl(&lparam.ty, &rparam.ty, ctx, dvs) {
+                if !Self::syn_eq_impl(&lparam.ty, &rparam.ty, ctx) {
                     return false;
                 }
 
                 let cod_ctx = ctx.clone().with_pair([lparam.id, rparam.id]);
-                Self::syn_eq_impl(lcod, rcod, &cod_ctx, dvs)
+                Self::syn_eq_impl(lcod, rcod, &cod_ctx)
             }
             (
                 Expr::FnApp {
@@ -411,9 +421,7 @@ impl Expr {
                     arg: rarg,
                     ..
                 },
-            ) => {
-                Self::syn_eq_impl(lfunc, rfunc, ctx, dvs) && Self::syn_eq_impl(larg, rarg, ctx, dvs)
-            }
+            ) => Self::syn_eq_impl(lfunc, rfunc, ctx) && Self::syn_eq_impl(larg, rarg, ctx),
 
             (
                 Expr::Match {
@@ -431,7 +439,7 @@ impl Expr {
                     ..
                 },
             ) => {
-                if !Self::syn_eq_impl(larg, rarg, ctx, dvs) {
+                if !Self::syn_eq_impl(larg, rarg, ctx) {
                     return false;
                 }
 
@@ -439,7 +447,7 @@ impl Expr {
                     iter::zip(lcod_pars, rcod_pars).map(|((_, lid), (_, rid))| [*lid, *rid]),
                 );
 
-                if !Self::syn_eq_impl(lcod_body, rcod_body, &cod_body_ctx, dvs) {
+                if !Self::syn_eq_impl(lcod_body, rcod_body, &cod_body_ctx) {
                     return false;
                 }
 
@@ -449,7 +457,7 @@ impl Expr {
                             .map(|((_, lid), (_, rid))| [*lid, *rid]),
                     );
 
-                    if !Self::syn_eq_impl(&larm.body, &rarm.body, &arm_body_ctx, dvs) {
+                    if !Self::syn_eq_impl(&larm.body, &rarm.body, &arm_body_ctx) {
                         return false;
                     }
                 }
@@ -460,8 +468,8 @@ impl Expr {
         }
     }
 
-    pub fn syn_eq(lhs: &Self, rhs: &Self, dvs: &Directives) -> bool {
-        Self::syn_eq_impl(lhs, rhs, &SynEqCtx::Empty, dvs)
+    pub fn syn_eq(lhs: &Self, rhs: &Self) -> bool {
+        Self::syn_eq_impl(lhs, rhs, &SynEqCtx::Empty)
     }
 
     fn expect_ty(&self, expected: &Self, md: &Module, ctx: &Context, depth: usize) -> Result<()> {
@@ -487,7 +495,7 @@ impl Expr {
             && found_level <= expected_level
         {
             return Ok(());
-        } else if Self::syn_eq(&found_evald, &expected_evald, &md.directives) {
+        } else if Self::syn_eq(&found_evald, &expected_evald) {
             return Ok(());
         }
 
@@ -515,28 +523,17 @@ impl Expr {
     pub fn ty(&self, md: &Module, ctx: &Context, depth: usize) -> Result<Self> {
         println!("{blank:|>depth$}ty: {self}", blank = "");
 
-        if let Some(max_depth) = md.directives.max_recursion_depth
-            && depth > max_depth
-        {
-            bail!(None, "max recursion depth ({max_depth}) exceeded");
-        }
-
         let res = match self {
             Self::TypeType { level, .. } => Self::TypeType {
                 level: level + 1,
                 span: None,
             },
-            Self::Displace { amount, arg, .. } => {
-                let mut ty = arg.ty(md, ctx, depth + 1)?;
-                ty.displace_ty(*amount);
-                ty
-            }
             Self::Var { id, .. } => {
                 let ty = ctx.ty_of_var(*id).expect("variables are bound");
                 ty.clone()
             }
-            Self::Path { path, span } => {
-                if let Some(item) = md.items.get(path)
+            Self::Path { path, span, level } => {
+                let mut res = if let Some(item) = md.items.get(path)
                     && let Some(ty) = item.ty()
                 {
                     ty
@@ -563,7 +560,10 @@ impl Expr {
                     ty.clone()
                 } else {
                     bail!(span.clone(), "cannot find item `{path}` in this scope")
-                }
+                };
+
+                res.displace(*level);
+                res
             }
             // TODO: clean this up
             Self::Fn { param, body, .. } => {
@@ -730,7 +730,6 @@ impl Item {
 impl Module {
     pub fn type_check_root(self) -> Result<Self> {
         let mut checked_module = Module::new();
-        checked_module.directives = self.directives;
 
         for (path, mut item) in self.items {
             item.type_check(&path, &checked_module)?;

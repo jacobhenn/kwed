@@ -1,0 +1,30 @@
+mod { TestPrelude }
+
+use { TestPrelude.{ℕ, Unit} }
+
+notation number-0 { ℕ.0 }
+notation number-suc { ℕ.suc }
+
+struct Pair(A: Type, B: A → Type): Type {
+    first: A,
+    second: B first,
+}
+
+struct Unit: Type {}
+
+def test-pair-0: Pair ℕ ([ℕ] Unit) {
+    Pair.make ℕ ([ℕ] Unit) 0 Unit.0
+}
+
+def test-pair-1: Pair ℕ ([ℕ] Unit) {
+    Pair.make ℕ ([ℕ] Unit) (first: 0, second: Unit.0)
+}
+
+def test-pair-2: Pair ℕ ([ℕ] Unit) {
+    Pair.make ℕ ([ℕ] Unit) 0 (second: Unit.0)
+}
+
+def test-pair-3: Pair ℕ ([ℕ] Unit) {
+    Pair.make ℕ ([ℕ] Unit) Unit.0 (first: 0)
+}
+

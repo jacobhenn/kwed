@@ -1,16 +1,26 @@
+use { Super.{Eq.Eq, False.{False, Not}, Map.{POINTWISE, IsInjective}, Logic, Product.Product} }
+
 // Uniqueness means specifically that any two elements of a type are equal. This *does not* imply
 // that the type is inhabited; see False.unique.
-def IsUnique(A: Type): Type
-    (x y: A) → Eq A x y,
+def Is-Unique(A: Type): Type {
+    (x y: A) → Eq A x y
 }
 
-def map-to-unique-is-unique(A B: Type, B-unique: IsUnique B): IsUnique (A → B) {
-    [f g: A → B] POINTWISE A B f g [x: A] B-unique (f x) (g x)
+def dependent-map-to-unique-is-unique(
+    A: Type,
+    B: A → Type,
+    B-is-unique: (x: A) → Is-Unique (B x)
+): Is-Unique ((x: A) → B x) {
+    [f g: (x: A) → B x] POINTWISE A B f g ([x: A] B-is-unique (f x) (g x))
+}
+
+def map-to-unique-is-unique(A B: Type, B-is-unique: Is-Unique B): Is-Unique (A → B) {
+    dependent-map-to-unique-is-unique A ([A] B) ([A] B-is-unique)
 }
 
 struct Prop: Type {
     Ty: Type,
-    Ty-unique: IsUnique Ty,
+    Ty-is-unique: Is-Unique Ty,
 }
 
 // Takes a type and turns it into a mere proposition which contains only the data of whether the
@@ -23,8 +33,8 @@ def Merely.make(A: Type, a: A): Merely A {
     Logic.double-neg A a
 }
 
-def Merely.is-unique(A: Type): IsUnique (Merely A) {
-    map-to-unique-is-unique (Not A) False False.unique,
+def Merely.is-unique(A: Type): Is-Unique (Merely A) {
+    map-to-unique-is-unique (Not A) False False.is-unique
 }
 
 def Forall(A: Type, B: A → Type): Type {
@@ -53,20 +63,21 @@ def ∃(A: Type, B: A → Type): Prop { Exists A B }
 
 struct Subset(A: Type): Type {
     In: A → Type,
-    In-unique: (a: A) → IsUnique (In a),
+    In-is-unique: (a: A) → Is-Unique (In a),
 }
 
 def Subset.∈(A: Type, P: Subset A): A → Type {
-    Subset.In A P x
+    Subset.In A P
 }
 
-struct SubtypeElem(A: Type, P: Subset A): Type {
+struct Subset-Elem(A: Type, P: Subset A): Type {
     inner: A,
     inner-in-subset: (Subset.In A P),
 }
 
-def Subtype.inner.is-injective(A: Type, P: Subset A): IsInjective (SubtypeElem.inner A P) {
-    [x y: SubtypeElem A P, x≠y: Not (Eq (SubtypeElem A P) x y)]
-        [xi=yi: Eq A (SubtypeElem.inner x) (SubtypeElem.inner y)]
-
-}
+// def Subset.inner.is-injective(A: Type, P: Subset A): IsInjective (SubtypeElem.inner A P) {
+//     [x y: SubtypeElem A P, x≠y: Not (Eq (SubtypeElem A P) x y)] (
+//         [xi=yi: Eq A (SubtypeElem.inner x) (SubtypeElem.inner y)]
+//             todo
+//     )
+// }

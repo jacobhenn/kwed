@@ -1,14 +1,9 @@
-def ID: Type 1
-{
-	(X: Type 0) → X → X
-}
+mod { TestPrelude }
 
-def id: ID
-{
-	[X: Type 0, x: X] x
-}
+use { TestPrelude.{Eq, ℕ} }
 
-def id_id_id: ID
-{
-	(↑ 1 id) ID id
+def transport(A B: Type, p: Eq@1 Type A B): A → B {
+	match p to [B* -] A → B* {
+		refl => [a: A] a,
+	}
 }

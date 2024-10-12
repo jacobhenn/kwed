@@ -6,19 +6,16 @@ pub mod desugared;
 
 use std::{cmp, fmt::Display, ops::Range};
 
-#[derive(PartialEq, Eq, Debug, Hash, Clone, Default)]
+#[derive(PartialEq, Eq, Debug, Hash, Copy, Clone, Default)]
 pub struct Span {
     pub file_id: usize,
-    pub range: Range<usize>,
+    pub start: usize,
+    pub end: usize,
 }
 
 impl Display for Span {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}:{}..{}",
-            self.file_id, self.range.start, self.range.end
-        )
+        write!(f, "{}:{}..{}", self.file_id, self.start, self.end)
     }
 }
 
@@ -44,12 +41,8 @@ impl Ident {
         Self::from_str("●")
     }
 
-    // pub fn from_id(id: Ulid) -> Self {
-    //     Self::new(id.to_string())
-    // }
-
-    pub fn to_expr(self) -> desugared::Expr {
-        Path::new(vec![self]).to_expr()
+    pub fn to_expr(self, level: usize) -> desugared::Expr {
+        Path::new(vec![self]).to_expr(level)
     }
 }
 
@@ -74,7 +67,11 @@ pub struct Path {
 
 impl Span {
     pub fn new(file_id: usize, range: Range<usize>) -> Self {
-        Self { file_id, range }
+        Self {
+            file_id,
+            start: range.start,
+            end: range.end,
+        }
     }
 
     pub fn hull_opts(lhs: Option<Self>, rhs: Option<Self>) -> Option<Self> {
@@ -82,8 +79,8 @@ impl Span {
 
         (lhs.file_id == rhs.file_id).then(|| Span {
             file_id: lhs.file_id,
-            range: cmp::min(lhs.range.start, rhs.range.start)
-                ..cmp::max(lhs.range.end, rhs.range.end),
+            start: cmp::min(lhs.start, rhs.start),
+            end: cmp::max(lhs.end, rhs.end),
         })
     }
 
@@ -97,8 +94,12 @@ impl Path {
         Self { components }
     }
 
-    pub fn to_expr(self) -> desugared::Expr {
-        self.into()
+    pub fn to_expr(self, level: usize) -> desugared::Expr {
+        desugared::Expr::Path {
+            path: self,
+            level,
+            span: None,
+        }
     }
 
     pub fn parent(self) -> Self {
@@ -134,6 +135,15 @@ impl Path {
         Span::hull(first_span.clone(), last_span.clone())
     }
 
+    // TODO: surely there is a better way to deal with this
+    pub fn concat_using_rhs_span(mut lhs: Self, rhs: Self) -> Self {
+        for component in &mut lhs.components {
+            component.span = None;
+        }
+        lhs.components.extend(rhs.components);
+        lhs
+    }
+
     pub fn with_prefix(mut self, prefix: Ident) -> Self {
         self.components.insert(0, prefix);
         self
@@ -159,12 +169,12 @@ impl Path {
     }
 }
 
-impl From<Path> for desugared::Expr {
-    fn from(path: Path) -> Self {
-        let span = path.span();
-        Self::Path { path, span }
-    }
-}
+// impl From<Path> for desugared::Expr {
+//     fn from(path: Path) -> Self {
+//         let span = path.span();
+//         Self::Path { path, span }
+//     }
+// }
 
 impl Display for Ident {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -183,21 +193,5 @@ impl Display for Path {
                 .intersperse(".")
                 .collect::<String>()
         )
-    }
-}
-
-#[derive(Debug, PartialEq, Eq, Clone, serde::Deserialize)]
-#[serde(default)]
-pub struct Directives {
-    pub type_in_type: bool,
-    pub max_recursion_depth: Option<usize>,
-}
-
-impl Default for Directives {
-    fn default() -> Self {
-        Self {
-            type_in_type: false,
-            max_recursion_depth: Some(512),
-        }
     }
 }

@@ -1,0 +1,14 @@
+mod { TestPrelude }
+
+use { TestPrelude.{Eq, ℕ} }
+
+notation number-0 { ℕ.0 }
+notation number-suc { ℕ.suc }
+
+def n2: ℕ {
+    let n0 = 0;
+    let n1: ℕ = ℕ.suc n0;
+    ℕ.suc n1
+}
+
+def n2=2: Eq ℕ n2 2 { Eq.refl ℕ 2 }

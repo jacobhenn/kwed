@@ -1,0 +1,8 @@
+mod { TestPrelude }
+
+use { TestPrelude.{ℕ, Eq} }
+
+notation number-0 { ℕ.0 }
+notation number-suc { ℕ.suc }
+
+def jones: Type 0 {}

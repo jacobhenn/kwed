@@ -1,9 +1,9 @@
 use crate::ast::{
-    sugared::{Arm, Expr, Item, Module, Param, Params},
-    Directives, Ident, Path, Span,
+    sugared::{Arm, Expr, Item, Module, Param, Params, PathTree},
+    Ident, Path, Span,
 };
 
-use std::str::FromStr;
+use std::ops::Range;
 
 #[cfg(test)]
 use std::assert_matches::assert_matches;
@@ -22,7 +22,7 @@ fn pad() -> impl Parser<char, (), Error = Simple<char>> + Clone {
     comment().padded().repeated().padded().ignored()
 }
 
-const SPECIAL_CHARS: &[char] = &['.', ',', ':', ';', '{', '}', '(', ')', '[', ']'];
+const SPECIAL_CHARS: &[char] = &['.', ',', ':', ';', '{', '}', '(', ')', '[', ']', '@'];
 
 const RESERVED_IDENTS: &[&str] = &[
     "def",
@@ -36,9 +36,10 @@ const RESERVED_IDENTS: &[&str] = &[
     "mod",
     "use",
     "notation",
+    "axiom",
+    "=",
     "=>",
     "→",
-    "↑",
     "//",
 ];
 
@@ -50,7 +51,7 @@ impl Ident {
             .repeated()
             .at_least(1)
             .collect::<String>()
-            .try_map(|name, span| {
+            .try_map(|name, span: Range<usize>| {
                 if RESERVED_IDENTS.contains(&name.as_str()) {
                     Err(Simple::custom(
                         span,
@@ -62,7 +63,11 @@ impl Ident {
             })
             .map_with_span(move |name, range| Self {
                 name,
-                span: Some(Span { file_id, range }),
+                span: Some(Span {
+                    file_id,
+                    start: range.start,
+                    end: range.end,
+                }),
             })
             .labelled("identifier")
             .debug("identifier")
@@ -89,6 +94,7 @@ impl Path {
             .map(|components| Self { components })
     }
 }
+
 impl Arm {
     pub fn parse<'a>(
         file_id: usize,
@@ -289,29 +295,19 @@ impl Expr {
             .debug("type type")
     }
 
-    pub fn parse_displace<'a>(
-        file_id: usize,
-        expr: impl Parser<char, Expr, Error = Simple<char>> + 'a,
-    ) -> impl Parser<char, Self, Error = Simple<char>> + 'a {
-        just('↑')
-            .then(pad())
-            .ignore_then(text::int(10).padded_by(pad()))
-            .try_map(|s: String, span| {
-                s.parse::<usize>()
-                    .map_err(|e| Simple::custom(span, format!("{e}")))
-            })
-            .then(expr.padded_by(pad()))
-            .map_with_span(move |(amount, arg), range| Self::Displace {
-                amount,
-                arg: Box::new(arg),
-                span: Span::new(file_id, range),
-            })
-    }
-
     pub fn parse_path(file_id: usize) -> impl Parser<char, Self, Error = Simple<char>> {
         Path::parse(file_id)
-            .map_with_span(move |path, range| Self::Path {
+            .then(
+                just('@')
+                    .ignore_then(text::int(10).try_map(|s: String, span| {
+                        s.parse::<usize>()
+                            .map_err(|e| Simple::custom(span, format!("{e}")))
+                    }))
+                    .or_not(),
+            )
+            .map_with_span(move |(path, level), range| Self::Path {
                 path,
+                level: level.unwrap_or(0),
                 span: Span::new(file_id, range),
             })
             .debug("path expression")
@@ -362,19 +358,33 @@ impl Expr {
             .debug("function type")
     }
 
+    // TODO: track the spans of named argument blocks for better diagnostics
     pub fn parse_fn_application<'a>(
         file_id: usize,
         expr: impl Parser<char, Expr, Error = Simple<char>> + Clone + 'a,
     ) -> impl Parser<char, Self, Error = Simple<char>> + 'a {
         Expr::parse_atomic(file_id, expr.clone())
             .then(
-                Expr::parse_atomic(file_id, expr)
+                Expr::parse_atomic(file_id, expr.clone())
                     .padded_by(pad())
                     .repeated(),
             )
-            .map_with_span(move |(func, args), range| Self::FnApp {
+            .then(
+                Ident::parse(file_id)
+                    .padded_by(pad())
+                    .then_ignore(just(':'))
+                    .then(expr.clone().padded_by(pad()))
+                    .separated_by(just(','))
+                    .allow_trailing()
+                    .padded_by(pad())
+                    .delimited_by(just('('), just(')'))
+                    .padded_by(pad())
+                    .or_not(),
+            )
+            .map_with_span(move |((func, args), named_args), range| Self::FnApp {
                 func: Box::new(func),
                 args,
+                named_args: named_args.unwrap_or_else(Vec::new),
                 span: Span::new(file_id, range),
             })
             .labelled("function application")
@@ -438,6 +448,45 @@ impl Expr {
             })
     }
 
+    pub fn parse_let<'a>(
+        file_id: usize,
+        expr: impl Parser<char, Expr, Error = Simple<char>> + Clone + 'a,
+    ) -> impl Parser<char, Self, Error = Simple<char>> + 'a {
+        text::keyword("let")
+            .ignore_then(Ident::parse(file_id).padded_by(pad()))
+            .then_ignore(just('='))
+            .then(expr.clone().padded_by(pad()))
+            .then_ignore(just(';').padded_by(pad()))
+            .then(expr)
+            .map_with_span(move |((name, val), body), range| Self::Let {
+                name,
+                val: Box::new(val),
+                body: Box::new(body),
+                span: Span::new(file_id, range),
+            })
+    }
+
+    pub fn parse_typed_let<'a>(
+        file_id: usize,
+        expr: impl Parser<char, Expr, Error = Simple<char>> + Clone + 'a,
+    ) -> impl Parser<char, Self, Error = Simple<char>> + 'a {
+        text::keyword("let")
+            .ignore_then(Ident::parse(file_id).padded_by(pad()))
+            .then_ignore(just(':'))
+            .then(expr.clone().padded_by(pad()))
+            .then_ignore(just('='))
+            .then(expr.clone().padded_by(pad()))
+            .then_ignore(just(';').padded_by(pad()))
+            .then(expr)
+            .map_with_span(move |(((name, ty), val), body), range| Self::TypedLet {
+                name,
+                val: Box::new(val),
+                ty: Box::new(ty),
+                body: Box::new(body),
+                span: Span::new(file_id, range),
+            })
+    }
+
     pub fn parse_in_parens<'a>(
         expr: impl Parser<char, Expr, Error = Simple<char>> + 'a,
     ) -> impl Parser<char, Self, Error = Simple<char>> + 'a {
@@ -464,7 +513,8 @@ impl Expr {
     pub fn parse(file_id: usize) -> impl Parser<char, Self, Error = Simple<char>> {
         recursive(|expr| {
             choice((
-                Self::parse_displace(file_id, expr.clone()),
+                Self::parse_let(file_id, expr.clone()),
+                Self::parse_typed_let(file_id, expr.clone()),
                 Self::parse_fn_type(file_id, expr.clone()),
                 Self::parse_fn_application(file_id, expr.clone()),
                 Self::parse_fn(file_id, expr.clone()),
@@ -476,16 +526,28 @@ impl Expr {
     }
 }
 
-impl Directives {
-    pub fn parse() -> impl Parser<char, Self, Error = Simple<char>> {
-        just("~]")
-            .not()
-            .repeated()
-            .delimited_by(just("[~"), just("~]"))
-            .collect()
-            .try_map(|s: String, span| {
-                ron::from_str(&s).map_err(|e| Simple::custom(span, format!("{e}")))
-            })
+impl PathTree {
+    pub fn parse(file_id: usize) -> impl Parser<char, Self, Error = Simple<char>> {
+        recursive(|path_tree| {
+            Path::parse(file_id)
+                .then(
+                    just('.')
+                        .padded_by(pad())
+                        .ignore_then(
+                            path_tree
+                                .padded_by(pad())
+                                .separated_by(just(','))
+                                .allow_trailing()
+                                .padded_by(pad())
+                                .delimited_by(just('{'), just('}')),
+                        )
+                        .or_not(),
+                )
+                .map(|(initial_path, children)| Self {
+                    initial_path,
+                    children,
+                })
+        })
     }
 }
 
@@ -500,9 +562,9 @@ impl Module {
         )
     }
 
-    fn parse_imports(file_id: usize) -> impl Parser<char, Vec<Path>, Error = Simple<char>> {
+    fn parse_imports(file_id: usize) -> impl Parser<char, Vec<PathTree>, Error = Simple<char>> {
         text::keyword("use").padded_by(pad()).ignore_then(
-            Path::parse(file_id)
+            PathTree::parse(file_id)
                 .padded_by(pad())
                 .separated_by(just(',').padded_by(pad()))
                 .allow_trailing()
@@ -526,22 +588,19 @@ impl Module {
     }
 
     pub fn parse_final(file_id: usize) -> impl Parser<char, Self, Error = Simple<char>> {
-        Directives::parse()
+        Self::parse_submodules(file_id)
+            .padded_by(pad())
             .or_not()
-            .then(Self::parse_submodules(file_id).padded_by(pad()).or_not())
             .then(Self::parse_imports(file_id).padded_by(pad()).or_not())
             .then(Self::parse_notation(file_id).padded_by(pad()))
             .then(Item::parse(file_id).padded_by(pad()).repeated())
             .then_ignore(end())
-            .map(
-                |((((directives, submodules), imports), notation), items)| Self {
-                    directives: directives.unwrap_or_default(),
-                    submodules: submodules.unwrap_or_else(Vec::new),
-                    imports: imports.unwrap_or_else(Vec::new),
-                    notation,
-                    items: items.into_iter().collect(),
-                },
-            )
+            .map(|(((submodules, imports), notation), items)| Self {
+                submodules: submodules.unwrap_or_else(Vec::new),
+                imports: imports.unwrap_or_else(Vec::new),
+                notation,
+                items: items.into_iter().collect(),
+            })
     }
 }
 
@@ -567,18 +626,6 @@ fn test_path_parse() {
     assert_matches!(Path::parse(0).then_ignore(end()).parse("x y z"), Err(..));
     assert_matches!(Path::parse(0).then_ignore(end()).parse("x;y;z"), Err(..));
     assert_matches!(Path::parse(0).then_ignore(end()).parse("x.y.z"), Ok(..));
-}
-
-#[test]
-fn test_displace_parse() {
-    let expr = || Expr::parse(0);
-
-    assert_matches!(
-        Expr::parse_displace(0, expr())
-            .then_ignore(end())
-            .parse("↑ 1 meow"),
-        Ok(..)
-    );
 }
 
 #[test]

@@ -1,0 +1,27 @@
+use {
+    Lib.{Core.{Prop.{Set, Set-Is-Set, Set-Map-Is-Set}, Map.compose}, Algebra.Compose-Is-Identity}, 
+    Super.Category-On 
+}
+
+def Category-On-Sets-And-Maps: Category-On@1 Set Set.Map {
+    Category-On.make@1 (
+        object-is-set: Set-Is-Set,
+        arrows-is-set: Set-Map-Is-Set,
+        compose: [A B C: Set] Map.compose (Set.inner A) (Set.inner B) (Set.inner C),
+        compose-is-associative: [A B C D: Set] 
+            Map.compose-is-associative (Set.inner A) (Set.inner B) (Set.inner C) (Set.inner D)
+        id: [A: Set] Map.id (Set.inner A),
+        id-is-id: Compose-Is-Identity.make (
+            is-left-id: [W X: Set] Map.id-is-left-id (Set.inner W) (Set.inner X),
+            is-right-id: [X Y: Set] Map.id-is-right-id (Set.inner X) (Set.inner Y),
+        ),
+    )
+}
+
+def Category-Of-Sets: Category@1 {
+    Category.make@1 (
+        Object: Set,
+        Arrow: Set.Map,
+        Category-On: Category-On-Sets-And-Maps,
+    )
+}

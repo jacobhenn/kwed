@@ -17,7 +17,6 @@ impl Expr {
 
         match self {
             Expr::TypeType { .. } | Expr::Rec { .. } | Expr::Var { .. } => (),
-            Expr::Displace { arg, .. } => Rc::make_mut(arg).replace(is_target, sub),
             Expr::Path { .. } => (),
             Expr::Fn { param, body, .. } => {
                 Rc::make_mut(param).ty.replace(is_target, sub);
@@ -91,7 +90,6 @@ impl Expr {
     pub fn contains_var(&self, search_id: Ulid) -> bool {
         match self {
             Expr::TypeType { .. } | Expr::Path { .. } | Expr::Rec { .. } => false,
-            Expr::Displace { arg, .. } => arg.contains_var(search_id),
             Expr::Var { id, .. } => *id == search_id,
             Expr::Fn { param, body, .. } => {
                 param.ty.contains_var(search_id) || body.contains_var(search_id)
@@ -118,15 +116,8 @@ impl Expr {
     pub fn eval(&mut self, md: &Module, ctx: &Context, depth: usize) -> Result<()> {
         println!("{blank:|>align$}eval: {self}", blank = "", align = depth);
 
-        if let Some(max_depth) = md.directives.max_recursion_depth
-            && depth > max_depth
-        {
-            bail!(None, "max recursion depth ({max_depth}) exceeded");
-        }
-
         match self {
             Expr::TypeType { .. } => (),
-            Expr::Displace { arg, .. } => Rc::make_mut(arg).eval(md, ctx, depth + 1)?,
             Expr::Var { .. } => (),
             Expr::Path { path, .. } => {
                 if let Some(Item::Def { val, .. }) = md.items.get(path) {

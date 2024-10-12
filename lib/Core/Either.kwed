@@ -1,4 +1,4 @@
 inductive Either(A B: Type): Type {
-    left: A → Sum A B,
-    right: B → Sum A B,
+    left: A → Either A B,
+    right: B → Either A B,
 }

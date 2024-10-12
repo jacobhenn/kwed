@@ -1,0 +1,35 @@
+mod { Set }
+
+use { Lib.{Core.Prop.Is-Set, Algebra.{Compose-Is-Associative, Compose-Is-Identity}} }
+
+// Primary reference: Riehl - Category Theory in Context
+
+struct Category-On(Object: Type, Arrow: (Object, Object) → Type): Type {
+    object-is-set: Is-Set Object,
+    arrows-is-set: (x y: Object) → Is-Set (Arrow x y),
+    compose: (x y z: Object, f: Arrow x y, g: Arrow y z) → Arrow x z,
+    compose-is-associative: Compose-Is-Associative Object Arrow compose,
+    id: (x: Object) → Arrow x x,
+    id-is-id: Compose-Is-Identity Object Arrow compose id,
+}
+
+struct Category: Type {
+    Object: Type,
+    Arrow: (Object, Object) → Type,
+
+    include Category-On Object Arrow,
+}
+
+def Category.compose3(
+    C: Category,
+    x y z w: Category.Object C,
+    f: Category.Arrow C x y,
+    g: Category.Arrow C y z,
+    h: Category.Arrow C z w,
+): Category.Arrow C x z {
+    Category.compose C x z w (Category.compose C x y z f g) h
+}
+
+def Discrete-Category-On(A: Type): Category {
+    
+}

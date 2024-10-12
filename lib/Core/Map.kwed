@@ -1,13 +1,44 @@
-use { Super.Eq.Eq }
+use {
+    Super.{
+        Eq.Eq, False.Not, Product.Product,
+        Prop.{Subset, Subset.∈, Subset-Elem, Merely, Is-Unique},
+    },
+}
 
-axiom POINTWISE: (
-    A B: Type,
-    f g: A → B,
-    (x: A) → Eq B (f x) (g x)
-) → Eq (A → B) f g;
+// η-reduction: f == [x] f x
+def eta(A: Type, B: A → Type, f: (x: A) → B x): Eq ((x: A) → B x) f ([x: A] f x) {
+    Eq.refl ((x: A) → B x) f
+}
 
-def eta(A B: Type, f: A → B): Eq (A → B) f ([x: A] f x) {
-    Eq.refl (A → B) f
+// f and g are pointwise equal
+// HoTT definition 2.4.1
+def Ptwise-Eq(A: Type, B: A → Type, f g: (x: A) → B x): Type {
+    (x: A) → Eq (B x) (f x) (g x)
+}
+
+// pointwise equality of functions is an equivalence relation
+
+def Ptwise-Eq.refl(A: Type, B: A → Type, f: (x: A) → B x): Ptwise-Eq A B f f {
+    [x: A] Eq.refl (B x) (f x)
+}
+
+def Ptwise-Eq.commute(
+    A: Type,
+    B: A → Type,
+    f g: (x: A) → B x,
+    f~g: Ptwise-Eq A B f g,
+): Ptwise-Eq A B g f {
+    [x: A] Eq.commute (B x) (f~g x)
+}
+
+def Ptwise-Eq.compose(
+    A: Type,
+    B: A → Type,
+    f g h: (x: A) → B x,
+    f~g: Ptwise-Eq A B f g,
+    g~h: Ptwise-Eq A B g h,
+): Ptwise-Eq A B f h {
+    [x: A] Eq.compose (B x) (f~g x) (g~h x)
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -38,11 +69,11 @@ def compose.assoc(A B C D: Type, f: A → B, g: B → C, h: C → D):
 {
     POINTWISE A D
         (compose3.right-assocd A B C D f g h) (compose3.left-assocd A B C D f g h)
-        [x: A] Eq.refl (A → D) (f (g (h x)))
+        ([x: A] Eq.refl (A → D) (f (g (h x))))
 }
 
 def compose3(A B C D: Type, f: A → B, g: B → C, h: C → D): A → D {
-    compose3.left-assoc A B C D f g h
+    compose3.left-assocd A B C D f g h
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -61,6 +92,87 @@ def substitute-both-sides(A A' B B': Type, p: Eq A A', q: Eq B B', f: A → B): 
 
 // -------------------------------------------------------------------------------------------------
 
+def Is-Constant(A B: Type, f: A → B): Type {
+    (x x': A) → Eq B (f x) (f x')
+}
+
+def Is-Fixed(A: Type, f: A → A): Type {
+    [x: A] Eq A (f x) x
+}
+
+def Agree-On(A B: Type, f g: A → B, P: Subset A): Type {
+    (x: A, ∈ A P x) → Eq B (f x) (g x)
+}
+
+def restrict(A B: Type, f: A → B, P: Subset A): (Subset-Elem A P) → B {
+    [p: Subset-Elem A P] f (Subset-Elem.inner p)
+}
+
+// -------------------------------------------------------------------------------------------------
+
+def Is-Left-Inverse(A B: Type, f: A → B, g: B → A): Type {
+    Ptwise-Eq A ([A] B) (compose B A B g f) (id B)
+}
+
+def Is-Right-Inverse(A B: Type, f: A → B, g: B → A): Type {
+    Ptwise-Eq A ([A] B) (compose A B A f g) (id A)
+}
+
+struct Left-Inverse(A B: Type, f: A → B): Type {
+    map: B → A,
+    map-is-left-inverse: Is-Left-Inverse A B f map,
+}
+
+struct Right-Inverse(A B: Type, f: A → B): Type {
+    map: B → A,
+    map-is-left-inverse: Is-Right-Inverse A B f map,
+}
+
+// -------------------------------------------------------------------------------------------------
+
+def Is-Injective(A B: Type, f: A → B): Type {
+    (x y: A, x≠y: Not (Eq A x y)) → (Not (Eq B (f x) (f y)))
+}
+
+// def Is-Injective.is-unique(A B: Type, f: A → B): Is-Unique (Is-Injective A B f) {
+//     map-to-unique-is-unique-3 A A (Not (Eq A x y)) (Not (Eq B (f x) (f y)))
+// }
+
+def Is-Injective-By-Contrapositive(A B: Type, f: A → B): Type {
+    (x y: A, fx=fy: Eq B (f x) (f y)) → Eq A x y
+}
+
+def Is-Surjective(A B: Type, f: A → B): Type {
+    (y: B) → Exists A ([x: A] (Eq B (f x) y))
+}
+
+def Is-Surjective.is-unique(A B: Type, f: A → B): Is-Unique (Is-Surjective A B f) {
+    map-to-unique-is-unique B (Exists A ([x: A] (Eq B (f x) y))) 
+        (Exists.is-unique A ([x: A] (Eq B (f x) y)))
+}
+
+struct Is-Bijective(A B: Type, f: A → B): Type {
+    is-injective: Is-Injective A B f,
+    is-surjective: Is-Surjective A B f,
+}
+
+struct Injection(A B: Type): Type {
+    map: A → B,
+    map-is-injective: Merely (Is-Injective A B map),
+}
+
+struct Surjection(A B: Type): Type {
+    map: A → B,
+    map-is-surjective: Merely (Is-Surjective A B map),
+}
+
+struct Bijection(A B: Type): Type {
+    map: A → B,
+    map-is-bijective: Merely (Is-Bijective A B map),
+}
+
+// -------------------------------------------------------------------------------------------------
+
 def id(A: Type): A → A {
     [a: A] a
 }
@@ -73,55 +185,29 @@ def id.is-right-id(A B: Type, f: A → B): Eq (A → B) (>> A B f (id B)) f {
     Eq.refl (A → B) f
 }
 
-
-// -------------------------------------------------------------------------------------------------
-
-def IsConstant(A B: Type, f: A → B): Type {
-    (x x': A) → Eq B (f x) (f x')
+def constant(A B: Type, b: B): A → B {
+    [a: A] b
 }
 
-def IsFixed(A: Type, f: A → A): Type {
-    Eq a (f x) x
+def flip(A B C: Type, f: (A, B) → C): (B, A) → C {
+    [b: B, a: A] f a b
 }
 
-def AgreeOn(A B: Type, f g: A → B, P: Subset A): Type {
-    (x: A, ∈ A P x) → Eq B (f x) (g x)
+def product(A B C D: Type, f: A → B, g: C → D): (Pair A C) → (Pair B D) {
+    [pair: Pair A B] match pair to [-] Pair C D {
+        pair a b => Pair.make C D (f a) (f b),
+    }
 }
 
-def restrict(A B: Type, f: A → B, P: Subset A): (Subtype A P) → B {
-    [p: Subtype A P] f (Subtype.inner p)
-}
+// (x y: A, x≠y: Not (Eq A x y)) → (Not (Eq B (f x) (f y)))
+def product-of-injections-is-injective(
+    A B C D: Type,
+    f: A → B, f-is-injective: Is-Injective A B f,
+    g: C → D, g-is-injective: Is-Injective C D g,
+): Is-Injective (Pair A C) (Pair B D) (product A B C D f g) {
+    let f×g = product A B C D f g;
 
-// -------------------------------------------------------------------------------------------------
-
-def IsInjective(A B: Type, f: A → B): Type {
-    (x y: A, x≠y: Not (Eq A x y)) → (Not (Eq B (f x) (f y)))
-}
-
-def IsInjective.ByContrapositive(A B: Type, f: A → B): Type {
-    (x y: A, fx=fy: Eq B (f x) (f y)) → Eq A x y
-}
-
-def IsSurjective(A B: Type, f: A → B): Type {
-    (y: B) → Product A [x: A] (Eq B (f x) y)
-}
-
-struct IsBijective(A B: Type, f: A → B): Type {
-    is-injective: IsInjective A B f,
-    is-surjective: IsSurjective A B f,
-}
-
-struct Injection(A B: Type): Type {
-    map: A → B,
-    map-is-injective: Merely (IsInjective A B map),
-}
-
-struct Surjection(A B: Type): Type {
-    map: A → B,
-    map-is-surjective: Merely (IsSurjective A B map),
-}
-
-struct Bijection(A B: Type): Type {
-    map: A → B,
-    map-is-bijective: Merely (IsBijective A B map),
+    [p0, p1: Pair A C, p0≠p1: Neq (Pair A C) p0 p1, fp0=fp1: Eq (Pair B D) (f×g p0) (f×g p1)]
+        // f-is-injective
+        todo // TODO: requires characterization of pair equality
 }

@@ -1,3 +1,5 @@
+use { Super.{Eq.Eq, Prop.Is-Unique} }
+
 // The type with one element.
 inductive Unit: Type {
     0: Unit,
@@ -10,7 +12,7 @@ def Unit.all-0(x: Unit): Eq Unit x Unit.0 {
     }
 }
 
-def Unit.unique: IsUnique Unit {
+def Unit.is-unique: Is-Unique Unit {
     [x y: Unit]
         Eq.compose Unit x Unit.0 y 
             (Unit.all-0 x)

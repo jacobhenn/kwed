@@ -1,0 +1,16 @@
+use { Super.{Map, Map.{Left-Inverse, Right-Inverse}} }
+
+// is a bi-invertible map
+// HoTT Def 4.3.1
+struct Is-Equiv(A B: Type, f: A → B): Type {
+    left-inv: Left-Inverse A B f,
+    right-inv: Right-Inverse A B f,
+}
+
+struct Equiv(A B: Type): Type {
+    map: A → B,
+
+    include (Is-Equiv A B map),
+}
+
+axiom UNIVALENCE: (A B: Type) → Equiv (Eq@1 Type A B) (Equiv A B);
