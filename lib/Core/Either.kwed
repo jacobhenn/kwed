@@ -1,4 +1,0 @@
-inductive Either(A B: Type): Type {
-    left: A → Either A B,
-    right: B → Either A B,
-}
