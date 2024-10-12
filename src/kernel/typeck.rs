@@ -1,5 +1,3 @@
-use std::{cmp, collections::HashSet, iter, rc::Rc};
-
 use crate::{
     ast::{
         desugared::{Arm, BindingParam, Expr, Item, Module},
@@ -8,7 +6,10 @@ use crate::{
     bail,
     err::Result,
     kernel::context::Context,
+    log,
 };
+
+use std::{cmp, collections::HashSet, iter, rc::Rc};
 
 // TODO: possibly replace this with `recursible_params` to be more idiomatic
 pub(super) fn recursible_param_idxs<'a>(
@@ -519,7 +520,8 @@ impl Expr {
 
     // TODO: verify assumption that this returns exprs in normal form
     pub fn ty(&self, md: &Module, ctx: &Context, depth: usize) -> Result<Self> {
-        println!("{blank:|>depth$}ty: {self}", blank = "");
+        let _guard = log::enter();
+        log!("ty: {self}");
 
         let res = match self {
             Self::TypeType { level, .. } => Self::TypeType {
@@ -641,7 +643,7 @@ impl Expr {
             }
         };
 
-        println!("{blank:|>depth$}|-> {res}", blank = "");
+        log!("-> {res}");
 
         Ok(res)
     }
@@ -690,7 +692,7 @@ fn expect_valid_inductive_def_ty(ty: &Expr) -> Result<()> {
 
 impl Item {
     pub fn ty(&self) -> Option<Expr> {
-        println!("ty: {self}");
+        log!("ty: {self}");
         match self {
             Item::Def { ty, .. } | Item::Axiom { ty, .. } => Some(ty.clone()),
             Item::Inductive { params, ty, .. } => {
@@ -733,9 +735,10 @@ impl Item {
                     if cons_ty_level > ty_level - 1 {
                         bail!(
                             cons_ty.span(),
-                            "size conflict: constructor `{cons_name}` exists at level `Type {cons_ty_level}`, but inductive type `{path}` exists at level `Type {}`", ty_level - 1;
+                            "constructor `{cons_name}` has level `Type {cons_ty_level}`, but inductive type `{path}` has level `Type {}`", ty_level - 1;
                             path.span().clone(),
-                            "this exists at level `Type {}`", ty_level - 1
+                            "this exists at level `Type {}`", ty_level - 1;
+                            @note "either your inductive definition is ill-founded, or you need to raise its type."
                         );
                     }
 

@@ -1,4 +1,4 @@
-use crate::{bail, err, err::Result};
+use crate::{bail, err, err::Result, log};
 
 use super::{
     desugared::{self, BindingParam},
@@ -103,6 +103,13 @@ pub struct Arm {
     pub body: Expr,
 }
 
+#[derive(Debug, PartialEq, Clone)]
+pub struct Field {
+    pub include: bool,
+    pub name: Ident,
+    pub ty: Expr,
+}
+
 #[derive(Debug, PartialEq)]
 pub enum Item {
     Def {
@@ -118,7 +125,7 @@ pub enum Item {
     Struct {
         params: Params,
         ty: Expr,
-        fields: Option<Vec<(Ident, Expr)>>,
+        fields: Option<Vec<Field>>,
     },
     Axiom {
         ty: Expr,
@@ -266,9 +273,15 @@ impl Desugarer {
                             )
                         };
 
-                        let arg_idx_saturated = cmp::min(arg_idx, args.len());
+                        if arg_idx > args.len() {
+                            bail!(
+                                Some(*span), "missing {} arguments before named arguments",
+                                arg_idx - args.len();
+                                func_params.get(0).and_then(|par| par.span), "function defined here"
+                            );
+                        }
 
-                        args.insert(arg_idx_saturated, self.desugar_expr(supplied_arg)?);
+                        args.insert(arg_idx, self.desugar_expr(supplied_arg)?);
                     }
                 }
 
@@ -360,7 +373,7 @@ impl Desugarer {
         struct_path: &Path,
         struct_def_params: &Params,
         struct_def_ty: &Expr,
-        struct_def_fields: &Option<Vec<(Ident, Expr)>>,
+        struct_def_fields: &Option<Vec<Field>>,
     ) -> Result<Vec<(Path, desugared::Item)>> {
         // The canonical example used in this function's comments will be the following struct:
         //
@@ -399,9 +412,9 @@ impl Desugarer {
         // the parameters of the `make` constructor: `(first: A, second: B first)`
         let make_params = struct_def_fields
             .iter()
-            .map(|(name, ty)| {
-                self.desugar_expr(ty)
-                    .map(|ty| BindingParam::new(name.clone(), ty))
+            .map(|field| {
+                self.desugar_expr(&field.ty)
+                    .map(|ty| BindingParam::new(field.name.clone(), ty))
             })
             .collect::<Result<Vec<_>>>()?;
 
@@ -456,7 +469,7 @@ impl Desugarer {
 
         let prepend_struct_path = |name: &Ident| struct_path.clone().with_suffix(name.clone());
 
-        for (field_idx, (field_name, field_ty)) in struct_def_fields.iter().enumerate() {
+        for (field_idx, field) in struct_def_fields.iter().enumerate() {
             // for this part of the comments, we'll focus on the second field of the struct,
             // ```
             //     second: B first,
@@ -475,14 +488,14 @@ impl Desugarer {
             // }
             // ```
 
-            let desugared_field_ty = self.desugar_expr(field_ty)?;
+            let desugared_field_ty = self.desugar_expr(&field.ty)?;
 
             // the return type of this getter: B (Pair.first A B pair)
             let mut getter_ret_ty = desugared_field_ty.clone();
-            for name in struct_def_fields.iter().map(|(name, _ty)| name) {
+            for field in struct_def_fields.iter().by_ref() {
                 getter_ret_ty.replace(
-                    &|expr: &desugared::Expr| expr.is_path_to_ident(name),
-                    &prepend_struct_path(name)
+                    &|expr: &desugared::Expr| expr.is_path_to_ident(&field.name),
+                    &prepend_struct_path(&field.name)
                         .clone()
                         .to_expr(0)
                         .with_args(param_vars.clone())
@@ -503,9 +516,10 @@ impl Desugarer {
                 .map(|_| (Ident::blank(), rand::random()))
                 .collect();
 
-            println!(
-                "struct_def_fields.len for {}.{field_name}: {}",
+            log!(
+                "struct_def_fields.len for {}.{}: {}",
                 struct_path,
+                field.name,
                 struct_def_fields.len(),
             );
 
@@ -522,7 +536,7 @@ impl Desugarer {
                 }],
             );
 
-            println!("desugar_struct: getter_body: {getter_body}");
+            log!("desugar_struct: getter_body: {getter_body}");
 
             let getter_val = getter_body.with_fn_params(getter_params.clone());
 
@@ -531,7 +545,7 @@ impl Desugarer {
                 val: getter_val,
             };
 
-            ret.push((prepend_struct_path(field_name).clone(), getter_def));
+            ret.push((prepend_struct_path(&field.name).clone(), getter_def));
         }
 
         Ok(ret)
@@ -661,7 +675,7 @@ impl Module {
                             .as_ref()
                             .expect("error node made it to desugaring")
                             .iter()
-                            .map(|(name, _ty)| name);
+                            .map(|field| &field.name);
 
                         return Ok(params.names().chain(fields_params).collect());
                     }
@@ -740,7 +754,7 @@ impl Module {
         };
 
         let res = desugarer.desugared_module()?;
-        println!("--- desugared module {self_name}:\n{res}");
+        log!("--- desugared module {self_name}:\n{res}");
 
         Ok(res)
     }

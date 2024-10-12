@@ -1,5 +1,5 @@
 use crate::ast::{
-    sugared::{Arm, Expr, Item, Module, Param, Params, PathTree},
+    sugared::{Arm, Expr, Field, Item, Module, Param, Params, PathTree},
     Ident, Path, Span,
 };
 
@@ -109,6 +109,25 @@ impl Arm {
                 constructor,
                 cons_args,
                 body,
+            })
+    }
+}
+
+impl Field {
+    pub fn parse<'a>(
+        file_id: usize,
+        expr: impl Parser<char, Expr, Error = Simple<char>> + 'a,
+    ) -> impl Parser<char, Self, Error = Simple<char>> + 'a {
+        just("include")
+            .or_not()
+            .padded_by(pad())
+            .then(Ident::parse(file_id))
+            .then_ignore(just(':').padded_by(pad()))
+            .then(expr)
+            .map(|((include, name), ty)| Self {
+                include: include.is_some(),
+                name,
+                ty,
             })
     }
 }
@@ -242,9 +261,7 @@ impl Item {
             .then(Expr::parse(file_id).padded_by(pad()))
             .padded_by(pad())
             .then(
-                Ident::parse(file_id)
-                    .then_ignore(just(':').padded_by(pad()))
-                    .then(Expr::parse(file_id).padded_by(pad()))
+                Field::parse(file_id, Expr::parse(file_id))
                     .separated_by(just(',').padded_by(pad()))
                     .allow_trailing()
                     .padded_by(pad())

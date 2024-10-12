@@ -1,0 +1,31 @@
+mod { TestPrelude }
+
+use { TestPrelude.ℕ }
+
+notation number-0 { ℕ.0 }
+notation number-suc { ℕ.suc }
+
+struct Foo: Type {
+    n: ℕ,
+    m: ℕ,
+}
+
+struct Bar: Type {
+    include foo: Foo,
+
+    x: ℕ,
+}
+
+def bar: Bar {
+    Bar.make (
+        foo: Foo.make (
+            n: 5,
+            m: 7,
+        ),
+        x: 13,
+    )
+}
+
+def bar.n: ℕ {
+    
+}

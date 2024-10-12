@@ -1,3 +1,5 @@
+use crate::log;
+
 use std::{iter, rc::Rc};
 
 use crate::{
@@ -112,7 +114,8 @@ impl Expr {
     }
 
     pub fn eval(&mut self, md: &Module, ctx: &Context, depth: usize) -> Result<()> {
-        println!("{blank:|>align$}eval: {self}", blank = "", align = depth);
+        let _guard = log::enter();
+        log!("eval: {self}");
 
         match self {
             Expr::TypeType { .. } => (),
@@ -235,7 +238,7 @@ impl Expr {
             }
         }
 
-        println!("{blank:|>depth$}|-> {self}", blank = "");
+        log!("-> {self}");
 
         Ok(())
     }
@@ -243,7 +246,7 @@ impl Expr {
 
 impl Item {
     pub fn eval(&mut self, md: &mut Module) -> Result<()> {
-        println!("eval: {self}");
+        log!("eval: {self}");
 
         match self {
             Item::Def { ty, val, .. } => {

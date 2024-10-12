@@ -7,12 +7,10 @@
 #![allow(irrefutable_let_patterns)]
 
 mod ast;
-
 mod err;
-
-mod parse;
-
 mod kernel;
+mod log;
+mod parse;
 
 use crate::ast::sugared;
 

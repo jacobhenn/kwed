@@ -1,4 +1,4 @@
-use crate::{ast::sugared, bail, err::Result};
+use crate::{ast::sugared, bail, err::Result, log, logn};
 
 use super::{Ident, Path, Span};
 
@@ -157,7 +157,7 @@ impl Display for Expr {
             Expr::Var { id, name, .. } => write!(f, "{}", name.name.as_str().with(id_color(*id)))?,
             // TODO: maybe do something fancy here to write just enough components to disambiguate
             Expr::Path { path, level, .. } => {
-                if std::env::var("KW_FULL_PATHS").is_ok_and(|s| s == "true") {
+                if std::env::var("KW_FULL_PATHS").is_ok_and(|s| s == "1") {
                     write!(f, "{}", path)?
                 } else {
                     write!(f, "{}", path.last_component())?
@@ -878,6 +878,9 @@ impl Module {
         new_items: &mut IndexMap<Path, Item>,
         visited: &mut Vec<Path>,
     ) -> Result<()> {
+        let _guard = log::enter();
+        log!("topsort: {path}");
+
         if new_items.contains_key(&path) {
             return Ok(());
         }
@@ -908,7 +911,7 @@ impl Module {
             self.topological_sort_visit(dependency_path, new_items, visited)?;
         }
 
-        new_items.shift_insert(0, path.clone(), item.clone());
+        new_items.insert(path.clone(), item.clone());
 
         Ok(())
     }
@@ -919,6 +922,8 @@ impl Module {
         for path in self.items.keys() {
             self.topological_sort_visit(path.clone(), &mut new_items, &mut Vec::new())?;
         }
+
+        self.items = new_items;
 
         Ok(())
     }
