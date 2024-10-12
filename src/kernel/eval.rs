@@ -7,8 +7,6 @@ use crate::{
     kernel::{context::Context, typeck::recursible_param_idxs},
 };
 
-use ulid::Ulid;
-
 impl Expr {
     pub fn replace(&mut self, is_target: &impl Fn(&Expr) -> bool, sub: &Expr) {
         if is_target(self) {
@@ -45,13 +43,13 @@ impl Expr {
         }
     }
 
-    pub fn substitute(&mut self, target_id: Ulid, sub: &Expr) {
+    pub fn substitute(&mut self, target_id: u128, sub: &Expr) {
         self.replace(&|expr| expr.is_var_with_id(target_id), sub)
     }
 
     pub fn substitute_many<'a>(
         &mut self,
-        target_ids: impl IntoIterator<Item = Ulid>,
+        target_ids: impl IntoIterator<Item = u128>,
         subs: impl IntoIterator<Item = &'a Expr>,
     ) {
         for (target_id, sub) in iter::zip(target_ids, subs) {
@@ -59,14 +57,14 @@ impl Expr {
         }
     }
 
-    pub fn with_substitution(mut self, target_id: Ulid, expr: Expr) -> Self {
+    pub fn with_substitution(mut self, target_id: u128, expr: Expr) -> Self {
         self.substitute(target_id, &expr);
         self
     }
 
     pub fn with_substitutions(
         mut self,
-        target_ids: impl IntoIterator<Item = Ulid>,
+        target_ids: impl IntoIterator<Item = u128>,
         subs: impl IntoIterator<Item = Expr>,
     ) -> Self {
         for (target_id, sub) in iter::zip(target_ids, subs) {
@@ -87,7 +85,7 @@ impl Expr {
     }
 
     // TODO: replace this with a more general method like `any_subexpr`
-    pub fn contains_var(&self, search_id: Ulid) -> bool {
+    pub fn contains_var(&self, search_id: u128) -> bool {
         match self {
             Expr::TypeType { .. } | Expr::Path { .. } | Expr::Rec { .. } => false,
             Expr::Var { id, .. } => *id == search_id,

@@ -10,8 +10,6 @@ use crate::{
     kernel::context::Context,
 };
 
-use ulid::Ulid;
-
 // TODO: possibly replace this with `recursible_params` to be more idiomatic
 pub(super) fn recursible_param_idxs<'a>(
     ind_def_path: &'a Path,
@@ -34,7 +32,7 @@ pub(super) fn recursible_param_idxs<'a>(
 
 fn match_ty(
     arg: &Expr,
-    cod_pars: &[(Ident, Ulid)],
+    cod_pars: &[(Ident, u128)],
     cod_body: &Expr,
     arms: &[Arm],
     match_span: &Option<Span>,
@@ -207,7 +205,7 @@ fn match_ty(
         // ```
 
         // arm.constructor: Ident: the constructor that we are matching for: `cons`
-        // arm.cons_args: Vec<(Ident, Ulid)>: the arguments of the constructor we are binding:
+        // arm.cons_args: Vec<(Ident, u128)>: the arguments of the constructor we are binding:
         //     `n' v' a'`
         // arm.body: Expr: the return value of the arm: `Vec.cons A (ℕ.suc n') (rec v') a'`
 
@@ -341,21 +339,21 @@ fn match_ty(
 #[derive(Clone, Debug)]
 enum SynEqCtx {
     Empty,
-    Pair(Box<Self>, [Ulid; 2]),
+    Pair(Box<Self>, [u128; 2]),
 }
 
 impl SynEqCtx {
-    fn with_pair(self, pair: [Ulid; 2]) -> Self {
+    fn with_pair(self, pair: [u128; 2]) -> Self {
         Self::Pair(Box::new(self), pair)
     }
 
-    fn with_pairs(self, pairs: impl IntoIterator<Item = [Ulid; 2]>) -> Self {
+    fn with_pairs(self, pairs: impl IntoIterator<Item = [u128; 2]>) -> Self {
         pairs
             .into_iter()
             .fold(self, |acc, pair| acc.with_pair(pair))
     }
 
-    fn contains_pair(&self, search_pair: [Ulid; 2]) -> bool {
+    fn contains_pair(&self, search_pair: [u128; 2]) -> bool {
         match self {
             SynEqCtx::Empty => false,
             SynEqCtx::Pair(outer, pair) => *pair == search_pair || outer.contains_pair(search_pair),
@@ -576,7 +574,7 @@ impl Expr {
                 )?;
 
                 let mut body = (**body).clone();
-                let new_id = Ulid::new();
+                let new_id = rand::random();
                 let new_var = (**param).clone().with_id(new_id).to_var();
                 body.substitute(param.id, &new_var);
                 cod.substitute(param.id, &new_var);

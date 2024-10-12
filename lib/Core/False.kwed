@@ -3,7 +3,7 @@ use { Super.Prop.Is-Unique }
 // The empty type.
 inductive False: Type {}
 
-// From a contradiction, anything follows. A non-dependent version of `False.elim`.
+// From a contradiction, anything follows.
 def False.diverge(A: Type, contra: False): A {
     match contra to [-] A {}
 }

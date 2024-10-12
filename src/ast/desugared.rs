@@ -9,8 +9,6 @@ use crossterm::style::{Color, Stylize};
 
 use indexmap::IndexMap;
 
-use ulid::Ulid;
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     TypeType {
@@ -19,7 +17,7 @@ pub enum Expr {
     },
 
     Var {
-        id: Ulid,
+        id: u128,
         name: Ident,
         span: Option<Span>,
     },
@@ -47,13 +45,13 @@ pub enum Expr {
 
     Match {
         arg: Rc<Self>,
-        cod_pars: Vec<(Ident, Ulid)>,
+        cod_pars: Vec<(Ident, u128)>,
         cod_body: Rc<Self>,
         arms: Vec<Arm>,
         span: Option<Span>,
     },
     Rec {
-        arg_id: Ulid,
+        arg_id: u128,
         arg_name: Ident,
         span: Option<Span>,
     },
@@ -69,7 +67,7 @@ pub struct Param {
 #[derive(Debug, Clone, PartialEq)]
 pub struct BindingParam {
     pub name: Ident,
-    pub id: Ulid,
+    pub id: u128,
     pub ty: Expr,
     pub span: Option<Span>,
 }
@@ -78,18 +76,18 @@ impl BindingParam {
     pub fn new(name: Ident, ty: Expr) -> Self {
         Self {
             name,
-            id: Ulid::new(),
+            id: rand::random(),
             ty,
             span: None,
         }
     }
 
-    pub fn with_id(self, id: Ulid) -> Self {
+    pub fn with_id(self, id: u128) -> Self {
         Self { id, ..self }
     }
 
     pub fn blank(ty: Expr) -> Self {
-        let id = Ulid::new();
+        let id = rand::random();
 
         Self {
             name: Ident::blank(),
@@ -108,7 +106,7 @@ impl Param {
     pub fn binding(self) -> BindingParam {
         BindingParam {
             name: self.name,
-            id: Ulid::new(),
+            id: rand::random(),
             ty: self.ty,
             span: self.span,
         }
@@ -118,7 +116,7 @@ impl Param {
 #[derive(Debug, PartialEq, Clone)]
 pub struct Arm {
     pub constructor: Ident,
-    pub cons_args: Vec<(Ident, Ulid)>,
+    pub cons_args: Vec<(Ident, u128)>,
     pub body: Expr,
 }
 
@@ -144,11 +142,11 @@ pub struct Module {
     pub items: IndexMap<Path, Item>,
 }
 
-pub(crate) fn ulid_color(id: Ulid) -> Color {
+pub(crate) fn id_color(id: u128) -> Color {
     Color::Rgb {
-        r: id.to_bytes()[7],
-        g: id.to_bytes()[8],
-        b: id.to_bytes()[9],
+        r: id.to_be_bytes()[0],
+        g: id.to_be_bytes()[1],
+        b: id.to_be_bytes()[2],
     }
 }
 
@@ -156,29 +154,36 @@ impl Display for Expr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Expr::TypeType { level, .. } => write!(f, "Type {level}")?,
-            Expr::Var { id, name, .. } => {
-                write!(f, "{}", name.name.as_str().with(ulid_color(*id)))?
-            }
+            Expr::Var { id, name, .. } => write!(f, "{}", name.name.as_str().with(id_color(*id)))?,
             // TODO: maybe do something fancy here to write just enough components to disambiguate
-            Expr::Path { path, .. } => {
+            Expr::Path { path, level, .. } => {
                 if std::env::var("KW_FULL_PATHS").is_ok_and(|s| s == "true") {
                     write!(f, "{}", path)?
                 } else {
                     write!(f, "{}", path.last_component())?
                 }
+
+                if *level != 0 {
+                    write!(f, "@{level}")?;
+                }
             }
             Expr::Fn { param, body, .. } => write!(
                 f,
                 "[{}: {}] {body}",
-                param.name.name.as_str().with(ulid_color(param.id)),
+                param.name.name.as_str().with(id_color(param.id)),
                 param.ty,
             )?,
-            Expr::FnType { param, cod, .. } => write!(
-                f,
-                "({}: {}) → {cod}",
-                param.name.name.as_str().with(ulid_color(param.id)),
-                param.ty
-            )?,
+            Expr::FnType { param, cod, .. } => {
+                let param_name_colored = param.name.name.as_str().with(id_color(param.id));
+
+                if cod.contains_var(param.id) {
+                    write!(f, "({param_name_colored}: {})", param.ty)?;
+                } else {
+                    write!(f, "{}", param.ty)?;
+                }
+
+                write!(f, " → {cod}",)?
+            }
             Expr::FnApp { .. } => {
                 self.head().fmt_in_parens(f)?;
 
@@ -198,7 +203,7 @@ impl Display for Expr {
                 "match {arg} to [{}] {cod_body} {{ {} }}",
                 cod_pars
                     .iter()
-                    .map(|(name, id)| name.name.as_str().with(ulid_color(*id)).to_string())
+                    .map(|(name, id)| name.name.as_str().with(id_color(*id)).to_string())
                     .intersperse(" ".to_string())
                     .collect::<String>(),
                 arms.iter()
@@ -208,11 +213,7 @@ impl Display for Expr {
             )?,
             Expr::Rec {
                 arg_id, arg_name, ..
-            } => write!(
-                f,
-                "rec {}",
-                arg_name.name.as_str().with(ulid_color(*arg_id))
-            )?,
+            } => write!(f, "rec {}", arg_name.name.as_str().with(id_color(*arg_id)))?,
         };
 
         if self.is_atomic() && std::env::var("KW_PRINT_SPANS").is_ok_and(|s| s == "true") {
@@ -234,7 +235,7 @@ impl Arm {
 
     pub fn new(
         constructor: Ident,
-        cons_args: impl IntoIterator<Item = (Ident, Ulid)>,
+        cons_args: impl IntoIterator<Item = (Ident, u128)>,
         body: Expr,
     ) -> Self {
         Self {
@@ -253,7 +254,7 @@ impl Display for Arm {
             self.constructor,
             self.cons_args
                 .iter()
-                .map(|(name, id)| name.name.as_str().with(ulid_color(*id)).to_string())
+                .map(|(name, id)| name.name.as_str().with(id_color(*id)).to_string())
                 .intersperse(" ".to_string())
                 .collect::<String>(),
             self.body,
@@ -315,7 +316,7 @@ impl Expr {
         Self::TypeType { level, span: None }
     }
 
-    pub fn var(id: Ulid, name: Ident) -> Self {
+    pub fn var(id: u128, name: Ident) -> Self {
         Self::Var {
             id,
             name,
@@ -395,7 +396,7 @@ impl Expr {
 
     pub fn matched(
         self,
-        cod_pars: impl IntoIterator<Item = (Ident, Ulid)>,
+        cod_pars: impl IntoIterator<Item = (Ident, u128)>,
         cod_body: Self,
         arms: impl IntoIterator<Item = Arm>,
     ) -> Self {
@@ -536,7 +537,7 @@ impl Expr {
         }
     }
 
-    pub fn is_var_with_id(&self, desired_id: Ulid) -> bool {
+    pub fn is_var_with_id(&self, desired_id: u128) -> bool {
         match self {
             Self::Var { id, .. } => *id == desired_id,
             _ => false,

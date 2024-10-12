@@ -11,8 +11,6 @@ use chumsky::Parser;
 use codespan_reporting::files::SimpleFiles;
 use indexmap::IndexMap;
 
-use ulid::Ulid;
-
 const FORBIDDEN_NAMES: &[&str] = &["Super", "Lib"];
 
 // TODO: add function to check for name duplication
@@ -286,7 +284,7 @@ impl Desugarer {
                 arg: self.desugar_expr(arg)?.rc(),
                 cod_pars: cod_pars
                     .into_iter()
-                    .map(|name| (name.clone(), Ulid::new()))
+                    .map(|name| (name.clone(), rand::random()))
                     .collect(),
                 cod_body: self.desugar_expr(cod_body)?.rc(),
                 arms: arms
@@ -296,7 +294,7 @@ impl Desugarer {
                 span: Some(*span),
             },
             Expr::Rec { arg_name, span } => desugared::Expr::Rec {
-                arg_id: Ulid::nil(),
+                arg_id: rand::random(),
                 arg_name: arg_name.clone(),
                 span: Some(*span),
             },
@@ -351,7 +349,7 @@ impl Desugarer {
             cons_args: arm
                 .cons_args
                 .iter()
-                .map(|name| (name.clone(), Ulid::new()))
+                .map(|name| (name.clone(), rand::random()))
                 .collect(),
             body: self.desugar_expr(&arm.body)?,
         })
@@ -497,12 +495,12 @@ impl Desugarer {
                 .clone()
                 .with_fn_ty_params(getter_params.clone());
 
-            let match_cod_par_id = Ulid::new();
+            let match_cod_par_id = rand::random();
 
             let cons_args: Vec<_> = struct_def_fields
                 .iter()
                 .cloned()
-                .map(|_| (Ident::blank(), Ulid::new()))
+                .map(|_| (Ident::blank(), rand::random()))
                 .collect();
 
             println!(

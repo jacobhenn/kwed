@@ -1,0 +1,18 @@
+inductive False: Type {}
+
+struct Problem: Type {
+    filter: (Problem → Type) → Type,
+}
+
+def class-of(S: Problem → Type): Problem {
+    Problem.make ([T: Problem → Type] Eq (Problem → Type) S T)
+}
+
+def apply-to-class(S T: Probelm → Type): Type {
+    S (class-of T)
+}
+
+def class-of.is-injective(
+    p p': Problem,
+    pf=p'f: Eq ((Problem → Type) → Type) (Problem.filter p) (Problem.filter p'),
+)
