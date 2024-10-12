@@ -1,18 +1,41 @@
 inductive False: Type {}
 
-struct Problem: Type {
-    filter: (Problem → Type) → Type,
+inductive Eq(A: Type, x: A): A → Type {
+	refl: Eq A x x,
 }
 
-def class-of(S: Problem → Type): Problem {
-    Problem.make ([T: Problem → Type] Eq (Problem → Type) S T)
+def Eq.congrue(A B: Type, f: A → B, x y: A, p: Eq A x y): Eq B (f x) (f y) {
+    match p to [y* -] Eq B (f x) (f y*) {
+        refl => Eq.refl B (f x),
+    }
 }
 
-def apply-to-class(S T: Probelm → Type): Type {
-    S (class-of T)
+inductive ℕ: Type {
+    0: ℕ,
+    suc: ℕ → ℕ,
 }
 
-def class-of.is-injective(
-    p p': Problem,
-    pf=p'f: Eq ((Problem → Type) → Type) (Problem.filter p) (Problem.filter p'),
-)
+// --------------------------------------------------------
+// HoTT Ex. 5.7
+
+struct Problem-v0: Type {
+     is-empty: Problem-v0 → False,
+}
+
+def Problem-v0-is-empty(p: Problem-v0): False {
+    Problem-v0.is-empty p p
+}
+
+def Problem-v0-is-inhabited: Problem-v0 {
+    Problem-v0.make ( is-empty: Problem-v0-is-empty )
+}
+
+def contradiction: False {
+    Problem-v0-is-empty Problem-v0-is-inhabited
+}
+
+// inductive Problem: Type {
+//     make-problem: (Problem → Problem) → Problem,
+// }
+
+

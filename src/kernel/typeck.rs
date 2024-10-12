@@ -645,6 +645,36 @@ impl Expr {
 
         Ok(res)
     }
+
+    fn check_positivity_impl(&self, this_ind: &Path, in_dom: bool) -> Result<()> {
+        match self {
+            Expr::TypeType { .. } | Expr::Var { .. } => (),
+            Expr::Path { path, .. } => {
+                if path == this_ind && in_dom {
+                    bail!(
+                        path.span(), "inductive types may not appear on the left of an arrow in their constructors";
+                        @note "this condition is called 'strict positivity', and prevents certain weirdly defined inductive types that allow indirect recursion."
+                    )
+                }
+            }
+            // TODO: fix this
+            Expr::Fn { .. } | Expr::Match { .. } | Expr::Rec { .. }=> unimplemented!("you're trying to do something tricky, and i haven't yet figured out how to prevent that properly."),
+            Expr::FnType { param, cod, .. } => {
+                param.ty.check_positivity_impl(this_ind, true)?;
+                cod.check_positivity_impl(this_ind, in_dom)?;
+            },
+            Expr::FnApp { func, arg, .. } => {
+                func.check_positivity_impl(this_ind, in_dom)?;
+                arg.check_positivity_impl(this_ind, in_dom)?;
+            },
+        }
+
+        Ok(())
+    }
+
+    fn check_positivity(&self, this_ind: &Path) -> Result<()> {
+        self.check_positivity_impl(this_ind, false)
+    }
 }
 
 fn expect_valid_inductive_def_ty(ty: &Expr) -> Result<()> {
@@ -716,7 +746,11 @@ impl Item {
                         );
                     }
 
-                    // TODO: positivity checking
+                    let mut cons_ty = cons_ty.clone();
+                    cons_ty.eval(md, &ctx, 0)?;
+                    for param in cons_ty.fn_ty_params() {
+                        param.ty.check_positivity(path)?;
+                    }
                 }
             }
         }
