@@ -86,7 +86,7 @@ fn main() -> anyhow::Result<()> {
     let after = Instant::now();
     println!("total: {} ms", (after - before).as_millis());
 
-    let checked_module = match checked_module_res {
+    match checked_module_res {
         Ok(md) => md,
         Err(e) => {
             e.emit(&files)?;

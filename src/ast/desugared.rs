@@ -1,4 +1,4 @@
-use crate::{ast::sugared, bail, err::Result, log, logn};
+use crate::{ast::sugared, bail, err::Result, log};
 
 use super::{Ident, Path, Span};
 
@@ -227,24 +227,6 @@ impl Display for Expr {
     }
 }
 
-impl Arm {
-    pub fn span(&self) -> Option<Span> {
-        Span::hull_opts(self.constructor.span.clone(), self.body.span())
-    }
-
-    pub fn new(
-        constructor: Ident,
-        cons_args: impl IntoIterator<Item = (Ident, u128)>,
-        body: Expr,
-    ) -> Self {
-        Self {
-            constructor,
-            cons_args: cons_args.into_iter().collect(),
-            body,
-        }
-    }
-}
-
 impl Display for Arm {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -309,10 +291,6 @@ impl Display for Module {
 impl Expr {
     pub fn rc(self) -> Rc<Self> {
         Rc::new(self)
-    }
-
-    pub fn type_type(level: usize) -> Self {
-        Self::TypeType { level, span: None }
     }
 
     pub fn var(id: u128, name: Ident) -> Self {
@@ -483,6 +461,7 @@ impl Expr {
     /// ^^^^^^^^^^^^^
     /// parameters
     /// ```
+    #[expect(unused)]
     pub fn fn_params(&self) -> Vec<&BindingParam> {
         let mut res = Vec::new();
         self.fn_params_impl(&mut res);
@@ -495,6 +474,7 @@ impl Expr {
     ///               ^
     ///               body
     /// ```
+    #[allow(dead_code)]
     pub fn root_body(&self) -> &Self {
         if let Self::Fn { body, .. } = self {
             body.root_body()
@@ -564,6 +544,7 @@ impl Expr {
         }
     }
 
+    #[expect(unused)]
     pub fn is_ident_with_name(&self, desired_name: &Ident) -> bool {
         if let Self::Path {
             path: Path { components },

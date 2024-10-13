@@ -4,7 +4,6 @@ use std::{iter, rc::Rc};
 
 use crate::{
     ast::desugared::{Expr, Item, Module},
-    bail,
     err::Result,
     kernel::{context::Context, typeck::recursible_param_idxs},
 };
@@ -49,16 +48,6 @@ impl Expr {
         self.replace(&|expr| expr.is_var_with_id(target_id), sub)
     }
 
-    pub fn substitute_many<'a>(
-        &mut self,
-        target_ids: impl IntoIterator<Item = u128>,
-        subs: impl IntoIterator<Item = &'a Expr>,
-    ) {
-        for (target_id, sub) in iter::zip(target_ids, subs) {
-            self.substitute(target_id, sub);
-        }
-    }
-
     pub fn with_substitution(mut self, target_id: u128, expr: Expr) -> Self {
         self.substitute(target_id, &expr);
         self
@@ -71,17 +60,6 @@ impl Expr {
     ) -> Self {
         for (target_id, sub) in iter::zip(target_ids, subs) {
             self.substitute(target_id, &sub);
-        }
-        self
-    }
-
-    pub fn with_replacements<'a>(
-        mut self,
-        targets: impl IntoIterator<Item = &'a dyn Fn(&Self) -> bool>,
-        subs: impl IntoIterator<Item = Expr>,
-    ) -> Self {
-        for (target, sub) in iter::zip(targets, subs) {
-            self.replace(&target, &sub);
         }
         self
     }

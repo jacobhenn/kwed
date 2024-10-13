@@ -26,10 +26,6 @@ pub struct Ident {
 }
 
 impl Ident {
-    pub fn new(name: String) -> Self {
-        Self { name, span: None }
-    }
-
     pub fn from_str(name: &str) -> Self {
         Self {
             name: name.to_string(),
@@ -41,6 +37,7 @@ impl Ident {
         Self::from_str("●")
     }
 
+    #[expect(dead_code)]
     pub fn to_expr(self, level: usize) -> desugared::Expr {
         Path::new(vec![self]).to_expr(level)
     }

@@ -9,7 +9,7 @@ use crate::{
     log,
 };
 
-use std::{cmp, collections::HashSet, iter, rc::Rc};
+use std::{cmp, iter, rc::Rc};
 
 // TODO: possibly replace this with `recursible_params` to be more idiomatic
 pub(super) fn recursible_param_idxs<'a>(

@@ -5,7 +5,7 @@ use super::{
     Ident, Path, Span,
 };
 
-use std::{cmp, collections::HashMap, iter, rc::Rc};
+use std::{collections::HashMap, iter};
 
 use chumsky::Parser;
 use codespan_reporting::files::SimpleFiles;
@@ -192,15 +192,10 @@ impl Expr {
             | Expr::Number { span, .. } => span,
         }
     }
-
-    pub fn rc(self) -> Rc<Self> {
-        Rc::new(self)
-    }
 }
 
 pub struct Desugarer {
     module: Module,
-    module_name: Ident,
 }
 
 impl Desugarer {
@@ -748,10 +743,7 @@ impl Module {
     }
 
     pub fn desugared(self, self_name: &Ident) -> Result<desugared::Module> {
-        let desugarer = Desugarer {
-            module: self,
-            module_name: self_name.clone(),
-        };
+        let desugarer = Desugarer { module: self };
 
         let res = desugarer.desugared_module()?;
         log!("--- desugared module {self_name}:\n{res}");
