@@ -297,7 +297,7 @@ impl Desugarer {
                 arg: self.desugar_expr(arg)?.rc(),
                 cod_pars: cod_pars
                     .into_iter()
-                    .map(|name| (name.clone(), rand::random()))
+                    .map(|name| (name.clone(), fastrand::u128(..)))
                     .collect(),
                 cod_body: self.desugar_expr(cod_body)?.rc(),
                 arms: arms
@@ -307,7 +307,7 @@ impl Desugarer {
                 span: Some(*span),
             },
             Expr::Rec { arg_name, span } => desugared::Expr::Rec {
-                arg_id: rand::random(),
+                arg_id: fastrand::u128(..),
                 arg_name: arg_name.clone(),
                 span: Some(*span),
             },
@@ -362,7 +362,7 @@ impl Desugarer {
             cons_args: arm
                 .cons_args
                 .iter()
-                .map(|name| (name.clone(), rand::random()))
+                .map(|name| (name.clone(), fastrand::u128(..)))
                 .collect(),
             body: self.desugar_expr(&arm.body)?,
         })
@@ -508,12 +508,12 @@ impl Desugarer {
                 .clone()
                 .with_fn_ty_params(getter_params.clone());
 
-            let match_cod_par_id = rand::random();
+            let match_cod_par_id = fastrand::u128(..);
 
             let cons_args: Vec<_> = struct_def_fields
                 .iter()
                 .cloned()
-                .map(|_| (Ident::blank(), rand::random()))
+                .map(|_| (Ident::blank(), fastrand::u128(..)))
                 .collect();
 
             log!(

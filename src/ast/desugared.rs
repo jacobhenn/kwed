@@ -5,9 +5,8 @@ use super::{Ident, Path, Span};
 use std::{fmt::Display, mem, rc::Rc};
 
 use codespan_reporting::files::SimpleFiles;
-use crossterm::style::{Color, Stylize};
-
 use indexmap::IndexMap;
+use yansi::{Color, Paint};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
@@ -76,7 +75,7 @@ impl BindingParam {
     pub fn new(name: Ident, ty: Expr) -> Self {
         Self {
             name,
-            id: rand::random(),
+            id: fastrand::u128(..),
             ty,
             span: None,
         }
@@ -87,7 +86,7 @@ impl BindingParam {
     }
 
     pub fn blank(ty: Expr) -> Self {
-        let id = rand::random();
+        let id = fastrand::u128(..);
 
         Self {
             name: Ident::blank(),
@@ -106,7 +105,7 @@ impl Param {
     pub fn binding(self) -> BindingParam {
         BindingParam {
             name: self.name,
-            id: rand::random(),
+            id: fastrand::u128(..),
             ty: self.ty,
             span: self.span,
         }
@@ -143,18 +142,18 @@ pub struct Module {
 }
 
 pub(crate) fn id_color(id: u128) -> Color {
-    Color::Rgb {
-        r: id.to_be_bytes()[0],
-        g: id.to_be_bytes()[1],
-        b: id.to_be_bytes()[2],
-    }
+    Color::Rgb(
+        id.to_be_bytes()[0],
+        id.to_be_bytes()[1],
+        id.to_be_bytes()[2],
+    )
 }
 
 impl Display for Expr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Expr::TypeType { level, .. } => write!(f, "Type {level}")?,
-            Expr::Var { id, name, .. } => write!(f, "{}", name.name.as_str().with(id_color(*id)))?,
+            Expr::Var { id, name, .. } => write!(f, "{}", name.name.as_str().paint(id_color(*id)))?,
             // TODO: maybe do something fancy here to write just enough components to disambiguate
             Expr::Path { path, level, .. } => {
                 if std::env::var("KW_FULL_PATHS").is_ok_and(|s| s == "1") {
@@ -170,11 +169,11 @@ impl Display for Expr {
             Expr::Fn { param, body, .. } => write!(
                 f,
                 "[{}: {}] {body}",
-                param.name.name.as_str().with(id_color(param.id)),
+                param.name.name.as_str().paint(id_color(param.id)),
                 param.ty,
             )?,
             Expr::FnType { param, cod, .. } => {
-                let param_name_colored = param.name.name.as_str().with(id_color(param.id));
+                let param_name_colored = param.name.name.as_str().paint(id_color(param.id));
 
                 if cod.contains_var(param.id) {
                     write!(f, "({param_name_colored}: {})", param.ty)?;
@@ -203,7 +202,7 @@ impl Display for Expr {
                 "match {arg} to [{}] {cod_body} {{ {} }}",
                 cod_pars
                     .iter()
-                    .map(|(name, id)| name.name.as_str().with(id_color(*id)).to_string())
+                    .map(|(name, id)| name.name.as_str().paint(id_color(*id)).to_string())
                     .intersperse(" ".to_string())
                     .collect::<String>(),
                 arms.iter()
@@ -213,7 +212,7 @@ impl Display for Expr {
             )?,
             Expr::Rec {
                 arg_id, arg_name, ..
-            } => write!(f, "rec {}", arg_name.name.as_str().with(id_color(*arg_id)))?,
+            } => write!(f, "rec {}", arg_name.name.as_str().paint(id_color(*arg_id)))?,
         };
 
         if self.is_atomic() && std::env::var("KW_PRINT_SPANS").is_ok_and(|s| s == "true") {
@@ -254,7 +253,7 @@ impl Display for Arm {
             self.constructor,
             self.cons_args
                 .iter()
-                .map(|(name, id)| name.name.as_str().with(id_color(*id)).to_string())
+                .map(|(name, id)| name.name.as_str().paint(id_color(*id)).to_string())
                 .intersperse(" ".to_string())
                 .collect::<String>(),
             self.body,

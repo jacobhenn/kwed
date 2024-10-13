@@ -32,12 +32,14 @@ inductive ℕ: Type {
     suc: ℕ → ℕ,
 }
 
-def ℕ.+(x: ℕ, y: ℕ): ℕ {
-    match y to [-] ℕ {      // define by induction on y
-        0 => x,             // in the case that y=0, return x
-        y' => suc (rec y'), // in the case that y=y'+1, return (x+y')+1
+def +(x y: ℕ): ℕ {
+    match y to [-] ℕ {            // define by induction on y
+        0 => x,                   // in the case that y=0, return x
+        suc y' => ℕ.suc (rec y'), // in the case that y=y'+1, return (x+y')+1 recursively
     }
 }
 ```
 
-for more advanced examples, feel free to browse the standard library at [lib/](https://github.com/jacobhenn/kwed/blob/main/lib/).
+## standard library
+
+for more advanced examples, feel free to browse [the standard library](https://github.com/jacobhenn/kwed-lib).

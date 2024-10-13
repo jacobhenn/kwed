@@ -38,7 +38,7 @@ macro_rules! logn {
             for _ in 0..depth {
                 bars.push('|');
             }
-            print!("{}", ::crossterm::style::Stylize::dim(::crossterm::style::Stylize::dark_grey(bars)));
+            print!("{}", ::yansi::Paint::dim(&::yansi::Paint::black(&bars)));
             print!($($arg)*);
         }
     };

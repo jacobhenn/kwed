@@ -5,7 +5,7 @@ use crate::ast::{
 
 use std::{fmt::Display, rc::Rc};
 
-use crossterm::style::Stylize;
+use yansi::Paint;
 
 #[derive(Clone, Debug)]
 pub enum Context {
@@ -36,12 +36,12 @@ impl Display for Context {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Context::Empty => Ok(()),
-            Context::Var { outer, id, .. } => write!(f, "{outer} {}", "●".with(id_color(*id))),
+            Context::Var { outer, id, .. } => write!(f, "{outer} {}", "●".paint(id_color(*id))),
             Context::RecTy { outer, id, .. } => {
-                write!(f, "{outer} (rec {})", "●".with(id_color(*id)))
+                write!(f, "{outer} (rec {})", "●".paint(id_color(*id)))
             }
             Context::RecVal { outer, id, .. } => {
-                write!(f, "{outer} rec-val{{{}}}", "●".with(id_color(*id)))
+                write!(f, "{outer} rec-val{{{}}}", "●".paint(id_color(*id)))
             }
             Context::ThisInductive { outer, path, .. } => write!(f, "{outer} {{inductive {path}}}"),
         }

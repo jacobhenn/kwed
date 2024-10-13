@@ -576,7 +576,7 @@ impl Expr {
                 )?;
 
                 let mut body = (**body).clone();
-                let new_id = rand::random();
+                let new_id = fastrand::u128(..);
                 let new_var = (**param).clone().with_id(new_id).to_var();
                 body.substitute(param.id, &new_var);
                 cod.substitute(param.id, &new_var);
