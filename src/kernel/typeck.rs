@@ -637,7 +637,7 @@ impl Expr {
                 } else {
                     bail!(
                         arg_name.span.clone(),
-                        "varibale `{arg_name}` not found in this scope"
+                        "variable `{arg_name}` not found in this scope"
                     )
                 }
             }
