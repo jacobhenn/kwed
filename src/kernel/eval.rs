@@ -12,6 +12,7 @@ impl Expr {
     pub fn replace(&mut self, is_target: &impl Fn(&Expr) -> bool, sub: &Expr) {
         if is_target(self) {
             *self = sub.clone();
+            return;
         }
 
         match self {
