@@ -5,14 +5,28 @@ use std::sync::{
 
 pub static DEPTH: AtomicUsize = AtomicUsize::new(0);
 
-pub static ENABLED: OnceLock<bool> = OnceLock::new();
+pub struct Config {
+    pub enabled: bool,
+    pub print_full_paths: bool,
+}
+
+impl Config {
+    fn from_env() -> Self {
+        Self {
+            enabled: std::env::var("KW_LOG").is_ok_and(|s| s == "1"),
+            print_full_paths: std::env::var("KW_FULL_PATHS").is_ok_and(|s| s == "1"),
+        }
+    }
+}
+
+pub static CONFIG: OnceLock<Config> = OnceLock::new();
 
 pub fn get_depth() -> usize {
     DEPTH.load(Ordering::Relaxed)
 }
 
-pub fn is_enabled() -> bool {
-    *ENABLED.get_or_init(|| std::env::var("KW_LOG").is_ok_and(|s| s == "1"))
+pub fn get_config() -> &'static Config {
+    CONFIG.get_or_init(|| Config::from_env())
 }
 
 pub struct DepthGuard;
@@ -41,7 +55,7 @@ macro_rules! log {
 #[macro_export]
 macro_rules! logn {
     ($($arg:tt)*) => {
-        if $crate::log::is_enabled() {
+        if $crate::log::get_config().enabled {
             let depth = $crate::log::get_depth();
             let mut bars = String::with_capacity(depth);
             for _ in 0..depth {

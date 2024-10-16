@@ -156,7 +156,7 @@ impl Display for Expr {
             Expr::Var { id, name, .. } => write!(f, "{}", name.name.as_str().paint(id_color(*id)))?,
             // TODO: maybe do something fancy here to write just enough components to disambiguate
             Expr::Path { path, level, .. } => {
-                if std::env::var("KW_FULL_PATHS").is_ok_and(|s| s == "1") {
+                if log::get_config().print_full_paths {
                     write!(f, "{}", path)?
                 } else {
                     write!(f, "{}", path.last_component())?
