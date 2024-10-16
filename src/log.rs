@@ -5,6 +5,7 @@ use std::sync::{
 
 pub static DEPTH: AtomicUsize = AtomicUsize::new(0);
 
+#[derive(Debug)]
 pub struct Config {
     pub enabled: bool,
     pub print_full_paths: bool,
@@ -45,10 +46,8 @@ pub fn enter() -> DepthGuard {
 #[macro_export]
 macro_rules! log {
     ($($arg:tt)*) => {
-        if option_env!("KW_LOG").is_some() {
-            $crate::logn!($($arg)*);
-            println!();
-        }
+        $crate::logn!($($arg)*);
+        println!();
     };
 }
 

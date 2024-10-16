@@ -474,6 +474,10 @@ impl Expr {
     fn expect_ty(&self, expected: &Self, md: &Module, ctx: &Context, depth: usize) -> Result<()> {
         let expected_ty = expected.ty(md, ctx, depth + 1)?;
         if !expected_ty.is_type_type() {
+            if expected.span().is_none() {
+                log!("expectation failed on spanless ty `{self}`");
+            }
+
             bail!(expected.span(), "expected type, found `{expected_ty}`");
         }
 
@@ -498,13 +502,18 @@ impl Expr {
             return Ok(());
         }
 
+        if self.span().is_none() {
+            log!("expectation failed on spanless expr `{self}`");
+        }
+
         bail!(
             self.span(),
             "mismatched types:\n    expected `{expected}`,\n    found    `{found}`";
             expected_evald.span(),
             "expected this";
-            @note "expected `{expected_evald}`";
-            @note "found    `{found_evald}`"
+            @note "evaluated:";
+            @note "  expected `{expected_evald}`";
+            @note "  found    `{found_evald}`"
         )
     }
 
