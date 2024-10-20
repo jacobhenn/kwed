@@ -96,10 +96,18 @@ impl Error {
             labels.push(Label::primary(span.file_id, span.start..span.end));
         }
 
-        for (span, msg) in self.labels {
+        for (span, msg) in &self.labels {
             if let Some(span) = span {
                 labels.push(Label::secondary(span.file_id, span.start..span.end).with_message(msg));
             }
+        }
+
+        if !crate::log::get_config().enabled
+            && (self.span.is_none() || self.labels.iter().any(|(span, _note)| span.is_none()))
+        {
+            self.notes.push(String::from(
+                "some spans are missing. run with KW_LOG=1 for a backtrace.",
+            ));
         }
 
         let diagnostic = Diagnostic::error()

@@ -668,8 +668,12 @@ impl Expr {
                     )
                 }
             }
-            // TODO: fix this
-            Expr::Fn { .. } | Expr::Match { .. } | Expr::Rec { .. }=> unimplemented!("you're trying to do something tricky, and i haven't yet figured out how to prevent that properly."),
+            // TODO: fix this: figure out if being sloppy here can cause unsoundness
+            Expr::Fn { body, .. } => body.check_positivity_impl(this_ind, in_dom)?,
+            Expr::Match { arms, .. } => for arm in arms {
+                arm.body.check_positivity_impl(this_ind, in_dom)?;
+            },
+            Expr::Rec { .. } => unimplemented!("you're trying to do something tricky, and i haven't yet figured out how to prevent that properly."),
             Expr::FnType { param, cod, .. } => {
                 param.ty.check_positivity_impl(this_ind, true)?;
                 cod.check_positivity_impl(this_ind, in_dom)?;
@@ -747,6 +751,7 @@ impl Item {
                             "constructor `{cons_name}` has level `Type {cons_ty_level}`, but inductive type `{path}` has level `Type {}`", ty_level - 1;
                             path.span().clone(),
                             "this exists at level `Type {}`", ty_level - 1;
+                            @note "IMPORTANT: it's not you, this error message is confusing because of a weird bug that I haven't traced down yet :(";
                             @note "either your inductive definition is ill-founded, or you need to raise its type."
                         );
                     }

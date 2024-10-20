@@ -23,7 +23,7 @@ pub enum Context {
     RecVal {
         outer: Rc<Self>,
         id: u128,
-        val: Expr,
+        val: Option<Expr>,
     },
     ThisInductive {
         outer: Rc<Self>,
@@ -70,12 +70,18 @@ impl Context {
         }
     }
 
-    pub fn with_rec_val(self, id: u128, val: Expr) -> Self {
+    pub fn with_rec_val(self, id: u128, val: Option<Expr>) -> Self {
         Self::RecVal {
             outer: Rc::new(self),
             id,
             val,
         }
+    }
+
+    pub fn with_rec_vals(self, rec_vals: impl IntoIterator<Item = (u128, Option<Expr>)>) -> Self {
+        rec_vals
+            .into_iter()
+            .fold(self, |ctx, (id, ty)| ctx.with_rec_val(id, ty))
     }
 
     pub fn ty_of_var(&self, search_id: u128) -> Option<&Expr> {
@@ -115,7 +121,7 @@ impl Context {
             Self::Empty => None,
             Self::RecVal { outer, id, val } => {
                 if *id == search_id {
-                    Some(val)
+                    val.as_ref()
                 } else {
                     outer.val_of_rec(search_id)
                 }

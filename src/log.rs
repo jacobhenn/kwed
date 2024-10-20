@@ -47,7 +47,9 @@ pub fn enter() -> DepthGuard {
 macro_rules! log {
     ($($arg:tt)*) => {
         $crate::logn!($($arg)*);
-        println!();
+        if $crate::log::get_config().enabled {
+            println!();
+        }
     };
 }
 

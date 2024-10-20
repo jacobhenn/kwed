@@ -178,7 +178,7 @@ impl Display for Expr {
                 if cod.contains_var(param.id) {
                     write!(f, "({param_name_colored}: {})", param.ty)?;
                 } else {
-                    write!(f, "{}", param.ty)?;
+                    param.ty.fmt_in_parens(f)?;
                 }
 
                 write!(f, " → {cod}",)?

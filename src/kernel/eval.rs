@@ -140,16 +140,21 @@ impl Expr {
                     Rc::make_mut(arg).eval(md, ctx, depth + 1)?;
                 }
             }
-            Expr::Match {
-                ref arg, ref arms, ..
-            } => {
-                let mut evald_arg: Expr = (**arg).clone();
+            Expr::Match { arg, arms, .. } => {
+                let mut evald_arg = (**arg).clone();
                 evald_arg.eval(md, ctx, depth + 1)?;
 
                 let Expr::Path {
                     path: cons_path, ..
                 } = evald_arg.head()
                 else {
+                    *arg = Rc::new(evald_arg);
+                    for arm in arms {
+                        let ctx = ctx
+                            .clone()
+                            .with_rec_vals(arm.cons_args.iter().map(|(_name, id)| (*id, None)));
+                        arm.body.eval(md, &ctx, depth + 1)?;
+                    }
                     return Ok(());
                 };
 
@@ -174,7 +179,10 @@ impl Expr {
                     return Ok(());
                 };
 
-                let Some(matching_arm) = arms.iter().find(|arm| &arm.constructor == cons_name)
+                let Some(matching_arm) = arms
+                    .iter()
+                    .find(|arm| arm.constructor == *cons_name)
+                    .cloned()
                 else {
                     return Ok(());
                 };
@@ -191,7 +199,7 @@ impl Expr {
                 let mut res_ctx = ctx.clone();
 
                 for i in recursible_param_idxs(&ind_def_path, ind_def_params, cons_ty) {
-                    let (_name, rec_cons_arg_id) = &matching_arm.cons_args[i];
+                    let rec_cons_arg_id = matching_arm.cons_args[i].1;
 
                     let rec_call_arg = evald_arg.args()[i + ind_def_num_params].clone();
 
@@ -202,7 +210,7 @@ impl Expr {
                     };
                     *arg = Rc::new(rec_call_arg);
 
-                    res_ctx = res_ctx.clone().with_rec_val(*rec_cons_arg_id, rec_val);
+                    res_ctx = res_ctx.clone().with_rec_val(rec_cons_arg_id, Some(rec_val));
                 }
 
                 res.eval(md, &res_ctx, depth + 1)?;
