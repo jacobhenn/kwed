@@ -67,12 +67,7 @@ fn match_ty(
     let ind_ty = arg_ty.head();
 
     // the head of the scrutinee type; e.g. the type we are inducting over: `Vec`
-    let Expr::Path {
-        path: ind_def_path,
-        level: arg_level,
-        ..
-    } = ind_ty
-    else {
+    let Expr::Path { path: ind_def_path, level: arg_level, .. } = ind_ty else {
         bail!(
             arg.span(), "cannot match on non-inductive type `{}`", arg_ty.head();
             arg_ty.head().span(), "defined here"
@@ -92,11 +87,7 @@ fn match_ty(
         constructors: ind_def_constructors,
     }) = md.items.get(ind_def_path)
     else {
-        bail!(
-            arg.span(),
-            "cannot match on `{}` - not in scope or not inductive",
-            ind_ty
-        );
+        bail!(arg.span(), "cannot match on `{}` - not in scope or not inductive", ind_ty);
     };
 
     let mut ind_def_params = ind_def_params.clone();
@@ -120,9 +111,7 @@ fn match_ty(
     let ind_def_num_indices = ind_def_indices.len();
 
     // the UUIDs of the parameters to the codomain: `[n v]`
-    let cod_par_ids = cod_pars
-        .iter()
-        .map(|(_cod_par_name, cod_par_id)| *cod_par_id);
+    let cod_par_ids = cod_pars.iter().map(|(_cod_par_name, cod_par_id)| *cod_par_id);
 
     // the particular parameter values of the inductive type that we will be matching over. unlike
     // indices, parameters cannot change over the course of an induction. `A`
@@ -140,9 +129,8 @@ fn match_ty(
         );
     }
 
-    let (_cod_final_par_name, cod_final_par_id) = cod_pars
-        .last()
-        .expect("codomain should have at least one parameter");
+    let (_cod_final_par_name, cod_final_par_id) =
+        cod_pars.last().expect("codomain should have at least one parameter");
 
     // -- type-check the codomain
 
@@ -211,9 +199,8 @@ fn match_ty(
         // arm.body: Expr: the return value of the arm: `Vec.cons A (ℕ.suc n') (rec v') a'`
 
         // cons_ty: the type of the constructor for this arm: `(n: ℕ, Vec A n, A) → Vec A (ℕ.suc n)`
-        let Some((_, cons_ty)) = ind_def_constructors
-            .iter()
-            .find(|(cons_name, _)| cons_name == &arm.constructor)
+        let Some((_, cons_ty)) =
+            ind_def_constructors.iter().find(|(cons_name, _)| cons_name == &arm.constructor)
         else {
             bail!(
                 arm.constructor.span.clone(), "no such constructor `{}`", arm.constructor;
@@ -236,10 +223,7 @@ fn match_ty(
             );
         }
 
-        let cons_arg_ids = arm
-            .cons_args
-            .iter()
-            .map(|(_cons_arg_name, cons_arg_id)| *cons_arg_id);
+        let cons_arg_ids = arm.cons_args.iter().map(|(_cons_arg_name, cons_arg_id)| *cons_arg_id);
 
         // the types of the arguments to the constructor of this arm, obtained by taking the
         // parameters of the constructor and substituting in the appropriate values for the
@@ -253,9 +237,7 @@ fn match_ty(
                 )
                 .with_substitutions(
                     cons_pars.iter().map(|par| par.id),
-                    arm.cons_args
-                        .iter()
-                        .map(|(name, id)| Expr::var(*id, name.clone())),
+                    arm.cons_args.iter().map(|(name, id)| Expr::var(*id, name.clone())),
                 )
         });
 
@@ -272,10 +254,7 @@ fn match_ty(
         for i in recursible_param_idxs(&ind_def_path, &ind_def_params, &cons_ty) {
             let (rec_cons_arg_name, rec_cons_arg_id) = &arm.cons_args[i];
 
-            let rec_par_ty = cons_arg_tys
-                .clone()
-                .nth(i)
-                .expect("recursible_param_idxs is correct");
+            let rec_par_ty = cons_arg_tys.clone().nth(i).expect("recursible_param_idxs is correct");
 
             // indices to pass to the codomain to get the type of the recursive application of
             // this match-expression to the recursible parameter: `n`
@@ -301,11 +280,7 @@ fn match_ty(
             .with_suffix(arm.constructor.clone())
             .to_expr(*arg_level)
             .with_args(arg_par_vals.clone().cloned())
-            .with_args(
-                arm.cons_args
-                    .iter()
-                    .map(|(name, id)| Expr::var(*id, name.clone())),
-            );
+            .with_args(arm.cons_args.iter().map(|(name, id)| Expr::var(*id, name.clone())));
 
         // the elaborated type of the scrutinee given that in this branch we know some of its
         // indices to have been constructed from indices of a lower structural component:
@@ -323,8 +298,7 @@ fn match_ty(
             .with_substitutions(cod_par_ids.clone(), cod_idx_args.cloned())
             .with_substitution(*cod_final_par_id, cod_final_arg);
 
-        arm.body
-            .expect_ty(&arm_expected_ty, md, &arm_ctx, depth + 1)?;
+        arm.body.expect_ty(&arm_expected_ty, md, &arm_ctx, depth + 1)?;
     }
 
     // the resulting type of the entire match expression, obtained by applying the type family
@@ -349,9 +323,7 @@ impl SynEqCtx {
     }
 
     fn with_pairs(self, pairs: impl IntoIterator<Item = [u128; 2]>) -> Self {
-        pairs
-            .into_iter()
-            .fold(self, |acc, pair| acc.with_pair(pair))
+        pairs.into_iter().fold(self, |acc, pair| acc.with_pair(pair))
     }
 
     fn contains_pair(&self, search_pair: [u128; 2]) -> bool {
@@ -372,16 +344,8 @@ impl Expr {
             }
             (Expr::Path { path: lpath, .. }, Expr::Path { path: rpath, .. }) => lpath == rpath,
             (
-                Expr::Fn {
-                    param: lparam,
-                    body: lbody,
-                    ..
-                },
-                Expr::Fn {
-                    param: rparam,
-                    body: rbody,
-                    ..
-                },
+                Expr::Fn { param: lparam, body: lbody, .. },
+                Expr::Fn { param: rparam, body: rbody, .. },
             ) => {
                 if !Self::syn_eq_impl(&lparam.ty, &rparam.ty, ctx) {
                     return false;
@@ -391,16 +355,8 @@ impl Expr {
                 Self::syn_eq_impl(lbody, rbody, &body_ctx)
             }
             (
-                Expr::FnType {
-                    param: lparam,
-                    cod: lcod,
-                    ..
-                },
-                Expr::FnType {
-                    param: rparam,
-                    cod: rcod,
-                    ..
-                },
+                Expr::FnType { param: lparam, cod: lcod, .. },
+                Expr::FnType { param: rparam, cod: rcod, .. },
             ) => {
                 if !Self::syn_eq_impl(&lparam.ty, &rparam.ty, ctx) {
                     return false;
@@ -410,16 +366,8 @@ impl Expr {
                 Self::syn_eq_impl(lcod, rcod, &cod_ctx)
             }
             (
-                Expr::FnApp {
-                    func: lfunc,
-                    arg: larg,
-                    ..
-                },
-                Expr::FnApp {
-                    func: rfunc,
-                    arg: rarg,
-                    ..
-                },
+                Expr::FnApp { func: lfunc, arg: larg, .. },
+                Expr::FnApp { func: rfunc, arg: rarg, .. },
             ) => Self::syn_eq_impl(lfunc, rfunc, ctx) && Self::syn_eq_impl(larg, rarg, ctx),
 
             (
@@ -488,13 +436,8 @@ impl Expr {
         let mut found_evald = found.clone();
         found_evald.eval(md, ctx, depth + 1)?;
 
-        if let Expr::TypeType {
-            level: found_level, ..
-        } = found_evald
-            && let Expr::TypeType {
-                level: expected_level,
-                ..
-            } = expected_evald
+        if let Expr::TypeType { level: found_level, .. } = found_evald
+            && let Expr::TypeType { level: expected_level, .. } = expected_evald
             && found_level <= expected_level
         {
             return Ok(());
@@ -533,10 +476,7 @@ impl Expr {
         log!("ty: {self}");
 
         let res = match self {
-            Self::TypeType { level, .. } => Self::TypeType {
-                level: level + 1,
-                span: None,
-            },
+            Self::TypeType { level, .. } => Self::TypeType { level: level + 1, span: None },
             Self::Var { id, .. } => {
                 let ty = ctx.ty_of_var(*id).expect("variables are bound");
                 ty.clone()
@@ -547,15 +487,11 @@ impl Expr {
                 {
                     ty
                 } else if let parent = path.clone().parent()
-                    && let Some(Item::Inductive {
-                        params,
-                        constructors,
-                        ..
-                    }) = md.items.get(&parent)
+                    && let Some(Item::Inductive { params, constructors, .. }) =
+                        md.items.get(&parent)
                     && let Some(last_component) = path.components.last()
-                    && let Some((_name, ty)) = constructors
-                        .iter()
-                        .find(|(name, _ty)| name == last_component)
+                    && let Some((_name, ty)) =
+                        constructors.iter().find(|(name, _ty)| name == last_component)
                 {
                     ty.clone().with_fn_ty_params(params.iter().cloned())
                 } else if let Some((ind_path, ty)) = ctx.this_inductive()
@@ -573,11 +509,8 @@ impl Expr {
             Self::Fn { param, body, .. } => {
                 param.ty.expect_ty_ty(md, ctx, depth + 1)?;
 
-                let mut cod = body.ty(
-                    md,
-                    &ctx.clone().with_var(param.id, param.ty.clone()),
-                    depth + 1,
-                )?;
+                let mut cod =
+                    body.ty(md, &ctx.clone().with_var(param.id, param.ty.clone()), depth + 1)?;
 
                 let mut body = (**body).clone();
                 let new_id = fastrand::u128(..);
@@ -586,10 +519,7 @@ impl Expr {
                 cod.substitute(param.id, &new_var);
 
                 Self::FnType {
-                    param: Rc::new(BindingParam {
-                        id: new_id,
-                        ..(**param).clone()
-                    }),
+                    param: Rc::new(BindingParam { id: new_id, ..(**param).clone() }),
                     cod: Rc::new(cod),
                     span: None,
                 }
@@ -600,10 +530,7 @@ impl Expr {
                 let ctx = ctx.clone().with_var(param.id, param.ty.clone());
                 let cod_level = cod.expect_ty_ty(md, &ctx, depth + 1)?;
 
-                Self::TypeType {
-                    level: cmp::max(param_level, cod_level),
-                    span: None,
-                }
+                Self::TypeType { level: cmp::max(param_level, cod_level), span: None }
             }
             Self::FnApp { func, arg, .. } => {
                 let mut func_type = func.ty(md, ctx, depth + 1)?;
@@ -621,16 +548,10 @@ impl Expr {
                 Rc::make_mut(&mut cod).substitute(param.id, arg);
                 Rc::unwrap_or_clone(cod)
             }
-            Expr::Match {
-                arg,
-                cod_pars,
-                cod_body,
-                arms,
-                span,
-            } => match_ty(arg, cod_pars, cod_body, arms, span, md, ctx, depth)?,
-            Expr::Rec {
-                arg_name, arg_id, ..
-            } => {
+            Expr::Match { arg, cod_pars, cod_body, arms, span } => {
+                match_ty(arg, cod_pars, cod_body, arms, span, md, ctx, depth)?
+            }
+            Expr::Rec { arg_name, arg_id, .. } => {
                 if let Some(ty_of_rec) = ctx.ty_of_rec(*arg_id) {
                     ty_of_rec.clone()
                 } else if ctx.ty_of_var(*arg_id).is_some() {
@@ -639,10 +560,7 @@ impl Expr {
                         @note "you may be using `rec` incorrectly. consult the documentation"
                     )
                 } else {
-                    bail!(
-                        arg_name.span.clone(),
-                        "variable `{arg_name}` not found in this scope"
-                    )
+                    bail!(arg_name.span.clone(), "variable `{arg_name}` not found in this scope")
                 }
             }
         };
@@ -691,10 +609,7 @@ fn expect_valid_inductive_def_ty(ty: &Expr) -> Result<()> {
     match ty {
         Expr::FnType { cod, .. } => expect_valid_inductive_def_ty(cod),
         Expr::TypeType { .. } => Ok(()),
-        other => bail!(
-            other.span(),
-            "`{other}` is not a valid type for an inductive definition"
-        ),
+        other => bail!(other.span(), "`{other}` is not a valid type for an inductive definition"),
     }
 }
 
@@ -715,12 +630,7 @@ impl Item {
             Item::Axiom { ty, .. } => {
                 ty.expect_ty_ty(md, &Context::Empty, 0)?;
             }
-            Item::Inductive {
-                params,
-                ty,
-                constructors,
-                ..
-            } => {
+            Item::Inductive { params, ty, constructors, .. } => {
                 let mut ctx = Context::Empty;
                 for param in params {
                     param.ty.expect_ty_ty(md, &ctx, 0)?;

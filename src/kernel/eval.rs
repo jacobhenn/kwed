@@ -30,12 +30,7 @@ impl Expr {
                 Rc::make_mut(func).replace(is_target, sub);
                 Rc::make_mut(arg).replace(is_target, sub);
             }
-            Expr::Match {
-                arg,
-                cod_body,
-                arms,
-                ..
-            } => {
+            Expr::Match { arg, cod_body, arms, .. } => {
                 Rc::make_mut(arg).replace(is_target, sub);
                 Rc::make_mut(cod_body).replace(is_target, sub);
                 for arm in arms {
@@ -79,12 +74,7 @@ impl Expr {
             Expr::FnApp { func, arg, .. } => {
                 func.contains_var(search_id) || arg.contains_var(search_id)
             }
-            Expr::Match {
-                arg,
-                cod_body,
-                arms,
-                ..
-            } => {
+            Expr::Match { arg, cod_body, arms, .. } => {
                 arg.contains_var(search_id)
                     || cod_body.contains_var(search_id)
                     || arms.iter().any(|arm| arm.body.contains_var(search_id))
@@ -144,10 +134,7 @@ impl Expr {
                 let mut evald_arg = (**arg).clone();
                 evald_arg.eval(md, ctx, depth + 1)?;
 
-                let Expr::Path {
-                    path: cons_path, ..
-                } = evald_arg.head()
-                else {
+                let Expr::Path { path: cons_path, .. } = evald_arg.head() else {
                     *arg = Rc::new(evald_arg);
                     for arm in arms {
                         let ctx = ctx
@@ -172,28 +159,21 @@ impl Expr {
 
                 let ind_def_num_params = ind_def_params.len();
 
-                let Some((_name, cons_ty)) = ind_def_constructors
-                    .iter()
-                    .find(|(name, _ty)| name == cons_name)
+                let Some((_name, cons_ty)) =
+                    ind_def_constructors.iter().find(|(name, _ty)| name == cons_name)
                 else {
                     return Ok(());
                 };
 
-                let Some(matching_arm) = arms
-                    .iter()
-                    .find(|arm| arm.constructor == *cons_name)
-                    .cloned()
+                let Some(matching_arm) =
+                    arms.iter().find(|arm| arm.constructor == *cons_name).cloned()
                 else {
                     return Ok(());
                 };
 
                 let mut res = matching_arm.body.clone().with_substitutions(
                     matching_arm.cons_args.iter().map(|(_name, id)| *id),
-                    evald_arg
-                        .args()
-                        .into_iter()
-                        .skip(ind_def_num_params)
-                        .cloned(),
+                    evald_arg.args().into_iter().skip(ind_def_num_params).cloned(),
                 );
 
                 let mut res_ctx = ctx.clone();
@@ -241,12 +221,7 @@ impl Item {
                 val.eval(md, &Context::Empty, 0)?;
             }
             Item::Axiom { ty, .. } => ty.eval(md, &Context::Empty, 0)?,
-            Item::Inductive {
-                params,
-                ty,
-                constructors,
-                ..
-            } => {
+            Item::Inductive { params, ty, constructors, .. } => {
                 let mut param_ctx = Context::Empty;
                 for param in params {
                     param.ty.eval(md, &param_ctx, 0)?;

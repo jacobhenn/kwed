@@ -112,24 +112,10 @@ pub struct Field {
 
 #[derive(Debug, PartialEq)]
 pub enum Item {
-    Def {
-        args: Params,
-        ty: Expr,
-        val: Expr,
-    },
-    Inductive {
-        params: Params,
-        ty: Expr,
-        constructors: Option<Vec<(Ident, Expr)>>,
-    },
-    Struct {
-        params: Params,
-        ty: Expr,
-        fields: Option<Vec<Field>>,
-    },
-    Axiom {
-        ty: Expr,
-    },
+    Def { args: Params, ty: Expr, val: Expr },
+    Inductive { params: Params, ty: Expr, constructors: Option<Vec<(Ident, Expr)>> },
+    Struct { params: Params, ty: Expr, fields: Option<Vec<Field>> },
+    Axiom { ty: Expr },
 }
 
 #[derive(Debug, PartialEq)]
@@ -204,10 +190,9 @@ impl Desugarer {
     fn desugar_expr(&self, expr: &Expr) -> Result<desugared::Expr> {
         Ok(match expr {
             Expr::Error => panic!("error node made it to desugaring"),
-            Expr::TypeType { level, span } => desugared::Expr::TypeType {
-                level: *level,
-                span: Some(*span),
-            },
+            Expr::TypeType { level, span } => {
+                desugared::Expr::TypeType { level: *level, span: Some(*span) }
+            }
             Expr::Path { path, span, level } => {
                 let resolved_path = if let Some(import_path) = self
                     .module
@@ -220,24 +205,15 @@ impl Desugarer {
                     path.clone()
                 };
 
-                desugared::Expr::Path {
-                    path: resolved_path,
-                    level: *level,
-                    span: Some(*span),
-                }
+                desugared::Expr::Path { path: resolved_path, level: *level, span: Some(*span) }
             }
-            Expr::Fn { params, body, .. } => self
-                .desugar_expr(body)?
-                .with_fn_params(self.desugar_params(params)?),
-            Expr::FnType { params, cod, .. } => self
-                .desugar_expr(cod)?
-                .with_fn_ty_params(self.desugar_params(params)?),
-            Expr::FnApp {
-                func,
-                args,
-                named_args,
-                span,
-            } => {
+            Expr::Fn { params, body, .. } => {
+                self.desugar_expr(body)?.with_fn_params(self.desugar_params(params)?)
+            }
+            Expr::FnType { params, cod, .. } => {
+                self.desugar_expr(cod)?.with_fn_ty_params(self.desugar_params(params)?)
+            }
+            Expr::FnApp { func, args, named_args, span } => {
                 let func_desugared = self.desugar_expr(func)?;
                 let mut args = args
                     .into_iter()
@@ -245,10 +221,7 @@ impl Desugarer {
                     .collect::<Result<Vec<_>>>()?;
 
                 if !named_args.is_empty() {
-                    let desugared::Expr::Path {
-                        path: func_path, ..
-                    } = &func_desugared
-                    else {
+                    let desugared::Expr::Path { path: func_path, .. } = &func_desugared else {
                         bail!(
                             Some(*span),
                             "named arguments may only be given to a function whose path is known at desugaring time";
@@ -282,23 +255,14 @@ impl Desugarer {
 
                 func_desugared.with_args(args)
             }
-            Expr::Match {
-                arg,
-                cod_pars,
-                cod_body,
-                arms,
-                span,
-            } => desugared::Expr::Match {
+            Expr::Match { arg, cod_pars, cod_body, arms, span } => desugared::Expr::Match {
                 arg: self.desugar_expr(arg)?.rc(),
                 cod_pars: cod_pars
                     .into_iter()
                     .map(|name| (name.clone(), fastrand::u128(..)))
                     .collect(),
                 cod_body: self.desugar_expr(cod_body)?.rc(),
-                arms: arms
-                    .into_iter()
-                    .map(|arm| self.desugar_arm(arm))
-                    .collect::<Result<_>>()?,
+                arms: arms.into_iter().map(|arm| self.desugar_arm(arm)).collect::<Result<_>>()?,
                 span: Some(*span),
             },
             Expr::Rec { arg_name, span } => desugared::Expr::Rec {
@@ -328,23 +292,12 @@ impl Desugarer {
                     }
                 }
             }
-            Expr::Let {
-                name, val, body, ..
-            } => {
+            Expr::Let { name, val, body, .. } => {
                 let mut res = self.desugar_expr(body)?;
-                res.replace(
-                    &|expr| expr.is_path_to_ident(name),
-                    &self.desugar_expr(val)?,
-                );
+                res.replace(&|expr| expr.is_path_to_ident(name), &self.desugar_expr(val)?);
                 res
             }
-            Expr::TypedLet {
-                name,
-                val,
-                ty,
-                body,
-                ..
-            } => self
+            Expr::TypedLet { name, val, ty, body, .. } => self
                 .desugar_expr(body)?
                 .with_fn_param(BindingParam::new(name.clone(), self.desugar_expr(ty)?))
                 .with_arg(self.desugar_expr(val)?),
@@ -400,16 +353,14 @@ impl Desugarer {
         // ```
 
         // the fields of the struct: `first: A, second: B first`
-        let struct_def_fields = struct_def_fields
-            .as_ref()
-            .expect("error nodes should not make it to desugaring");
+        let struct_def_fields =
+            struct_def_fields.as_ref().expect("error nodes should not make it to desugaring");
 
         // the parameters of the `make` constructor: `(first: A, second: B first)`
         let make_params = struct_def_fields
             .iter()
             .map(|field| {
-                self.desugar_expr(&field.ty)
-                    .map(|ty| BindingParam::new(field.name.clone(), ty))
+                self.desugar_expr(&field.ty).map(|ty| BindingParam::new(field.name.clone(), ty))
             })
             .collect::<Result<Vec<_>>>()?;
 
@@ -420,12 +371,7 @@ impl Desugarer {
         let make_ty = struct_path
             .clone()
             .to_expr(0)
-            .with_args(
-                desugared_struct_def_params
-                    .iter()
-                    .cloned()
-                    .map(BindingParam::to_var),
-            )
+            .with_args(desugared_struct_def_params.iter().cloned().map(BindingParam::to_var))
             .with_fn_ty_params(make_params);
 
         let make_ident = Ident::from_str("make");
@@ -447,20 +393,15 @@ impl Desugarer {
         // -- emit getter functions
 
         // the parameters of our struct, converted to variables for easy application: `A B`
-        let param_vars = desugared_struct_def_params
-            .iter()
-            .cloned()
-            .map(BindingParam::to_var);
+        let param_vars = desugared_struct_def_params.iter().cloned().map(BindingParam::to_var);
 
         // the final parameter of all getters: `Pair A B`
         let getter_final_param =
             BindingParam::blank(struct_path.clone().to_expr(0).with_args(param_vars.clone()));
 
         // the parameters of all getters: `A: Type, B: A → Type, pair: Pair A B`
-        let getter_params = desugared_struct_def_params
-            .iter()
-            .cloned()
-            .chain([getter_final_param.clone()]);
+        let getter_params =
+            desugared_struct_def_params.iter().cloned().chain([getter_final_param.clone()]);
 
         let prepend_struct_path = |name: &Ident| struct_path.clone().with_suffix(name.clone());
 
@@ -499,9 +440,7 @@ impl Desugarer {
             }
 
             // the type of this getter: `(A: Type, B: A → Type, pair: Pair A B) → getter_ret_ty`
-            let getter_ty = getter_ret_ty
-                .clone()
-                .with_fn_ty_params(getter_params.clone());
+            let getter_ty = getter_ret_ty.clone().with_fn_ty_params(getter_params.clone());
 
             let match_cod_par_id = fastrand::u128(..);
 
@@ -535,10 +474,7 @@ impl Desugarer {
 
             let getter_val = getter_body.with_fn_params(getter_params.clone());
 
-            let getter_def = desugared::Item::Def {
-                ty: getter_ty,
-                val: getter_val,
-            };
+            let getter_def = desugared::Item::Def { ty: getter_ty, val: getter_val };
 
             ret.push((prepend_struct_path(&field.name).clone(), getter_def));
         }
@@ -551,31 +487,20 @@ impl Desugarer {
             Item::Def { args, ty, val } => {
                 let params_desugared = self.desugar_params(args)?;
 
-                let ty = self
-                    .desugar_expr(ty)?
-                    .with_fn_ty_params(params_desugared.clone());
+                let ty = self.desugar_expr(ty)?.with_fn_ty_params(params_desugared.clone());
 
                 let val_span = val.span();
 
-                let val = self
-                    .desugar_expr(val)?
-                    .with_fn_params(params_desugared)
-                    .with_span(val_span);
+                let val =
+                    self.desugar_expr(val)?.with_fn_params(params_desugared).with_span(val_span);
 
                 vec![(path.clone(), desugared::Item::Def { ty, val })]
             }
             Item::Struct { params, ty, fields } => self.desugar_struct(path, params, ty, fields)?,
-            Item::Axiom { ty } => vec![(
-                path.clone(),
-                desugared::Item::Axiom {
-                    ty: self.desugar_expr(ty)?,
-                },
-            )],
-            Item::Inductive {
-                params,
-                ty,
-                constructors,
-            } => {
+            Item::Axiom { ty } => {
+                vec![(path.clone(), desugared::Item::Axiom { ty: self.desugar_expr(ty)? })]
+            }
+            Item::Inductive { params, ty, constructors } => {
                 vec![(
                     path.clone(),
                     desugared::Item::Inductive {
@@ -601,11 +526,7 @@ impl Desugarer {
             .iter()
             .map(|name| {
                 let span = name.span.clone();
-                desugared::Param {
-                    name: name.clone(),
-                    ty: ty.clone(),
-                    span,
-                }
+                desugared::Param { name: name.clone(), ty: ty.clone(), span }
             })
             .collect())
     }
@@ -631,10 +552,7 @@ impl Desugarer {
             desugared_items.extend(self.desugar_item(path, item)?);
         }
 
-        Ok(desugared::Module {
-            submodules: self.module.submodules.clone(),
-            items: desugared_items,
-        })
+        Ok(desugared::Module { submodules: self.module.submodules.clone(), items: desugared_items })
     }
 }
 
@@ -646,19 +564,13 @@ impl Module {
             }
             None => {
                 match self.items.get(&path.clone().parent()) {
-                    Some(Item::Inductive {
-                        constructors,
-                        params: ind_def_pars,
-                        ..
-                    }) => {
+                    Some(Item::Inductive { constructors, params: ind_def_pars, .. }) => {
                         if let Some((_cons_name, cons_ty)) = constructors
                             .as_ref()
                             .expect("error node made it to desugaring")
                             .iter()
                             .find(|(cons_name, _cons_ty)| cons_name == path.last_component())
-                            && let Expr::FnType {
-                                params: cons_pars, ..
-                            } = cons_ty
+                            && let Expr::FnType { params: cons_pars, .. } = cons_ty
                         {
                             return Ok(ind_def_pars.names().chain(cons_pars.names()).collect());
                         }
@@ -685,15 +597,10 @@ impl Module {
 
     pub fn check_paths(&self) -> Result<()> {
         for (path, _item) in &self.items {
-            if let Some(bad_component) = path
-                .components
-                .iter()
-                .find(|c| FORBIDDEN_NAMES.contains(&c.name.as_str()))
+            if let Some(bad_component) =
+                path.components.iter().find(|c| FORBIDDEN_NAMES.contains(&c.name.as_str()))
             {
-                bail!(
-                    bad_component.span.clone(),
-                    "`{bad_component}` is a reserved identifier"
-                )
+                bail!(bad_component.span.clone(), "`{bad_component}` is a reserved identifier")
             }
         }
 

@@ -73,12 +73,7 @@ pub struct BindingParam {
 
 impl BindingParam {
     pub fn new(name: Ident, ty: Expr) -> Self {
-        Self {
-            name,
-            id: fastrand::u128(..),
-            ty,
-            span: None,
-        }
+        Self { name, id: fastrand::u128(..), ty, span: None }
     }
 
     pub fn with_id(self, id: u128) -> Self {
@@ -88,12 +83,7 @@ impl BindingParam {
     pub fn blank(ty: Expr) -> Self {
         let id = fastrand::u128(..);
 
-        Self {
-            name: Ident::blank(),
-            id,
-            ty,
-            span: None,
-        }
+        Self { name: Ident::blank(), id, ty, span: None }
     }
 
     pub fn to_var(self) -> Expr {
@@ -103,12 +93,7 @@ impl BindingParam {
 
 impl Param {
     pub fn binding(self) -> BindingParam {
-        BindingParam {
-            name: self.name,
-            id: fastrand::u128(..),
-            ty: self.ty,
-            span: self.span,
-        }
+        BindingParam { name: self.name, id: fastrand::u128(..), ty: self.ty, span: self.span }
     }
 }
 
@@ -121,18 +106,9 @@ pub struct Arm {
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Item {
-    Def {
-        ty: Expr,
-        val: Expr,
-    },
-    Axiom {
-        ty: Expr,
-    },
-    Inductive {
-        params: Vec<BindingParam>,
-        ty: Expr,
-        constructors: Vec<(Ident, Expr)>,
-    },
+    Def { ty: Expr, val: Expr },
+    Axiom { ty: Expr },
+    Inductive { params: Vec<BindingParam>, ty: Expr, constructors: Vec<(Ident, Expr)> },
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -142,11 +118,7 @@ pub struct Module {
 }
 
 pub(crate) fn id_color(id: u128) -> Color {
-    Color::Rgb(
-        id.to_be_bytes()[0],
-        id.to_be_bytes()[1],
-        id.to_be_bytes()[2],
-    )
+    Color::Rgb(id.to_be_bytes()[0], id.to_be_bytes()[1], id.to_be_bytes()[2])
 }
 
 impl Display for Expr {
@@ -191,13 +163,7 @@ impl Display for Expr {
                     arg.fmt_in_parens(f)?;
                 }
             }
-            Expr::Match {
-                arg,
-                cod_pars,
-                cod_body,
-                arms,
-                ..
-            } => write!(
+            Expr::Match { arg, cod_pars, cod_body, arms, .. } => write!(
                 f,
                 "match {arg} to [{}] {cod_body} {{ {} }}",
                 cod_pars
@@ -205,14 +171,11 @@ impl Display for Expr {
                     .map(|(name, id)| name.name.as_str().paint(id_color(*id)).to_string())
                     .intersperse(" ".to_string())
                     .collect::<String>(),
-                arms.iter()
-                    .map(Arm::to_string)
-                    .intersperse(", ".to_string())
-                    .collect::<String>(),
+                arms.iter().map(Arm::to_string).intersperse(", ".to_string()).collect::<String>(),
             )?,
-            Expr::Rec {
-                arg_id, arg_name, ..
-            } => write!(f, "rec {}", arg_name.name.as_str().paint(id_color(*arg_id)))?,
+            Expr::Rec { arg_id, arg_name, .. } => {
+                write!(f, "rec {}", arg_name.name.as_str().paint(id_color(*arg_id)))?
+            }
         };
 
         if self.is_atomic() && std::env::var("KW_PRINT_SPANS").is_ok_and(|s| s == "true") {
@@ -254,12 +217,7 @@ impl Display for Item {
         match self {
             Item::Def { ty, val, .. } => write!(f, "def: {ty} {{ {val} }}"),
             Item::Axiom { ty, .. } => write!(f, "axiom: {ty}"),
-            Item::Inductive {
-                params,
-                ty,
-                constructors,
-                ..
-            } => write!(
+            Item::Inductive { params, ty, constructors, .. } => write!(
                 f,
                 "inductive({}): {ty} {{ {} }}",
                 params
@@ -294,35 +252,19 @@ impl Expr {
     }
 
     pub fn var(id: u128, name: Ident) -> Self {
-        Self::Var {
-            id,
-            name,
-            span: None,
-        }
+        Self::Var { id, name, span: None }
     }
 
     pub fn with_fn_param(self, param: BindingParam) -> Self {
-        Self::Fn {
-            param: Rc::new(param),
-            body: Rc::new(self),
-            span: None,
-        }
+        Self::Fn { param: Rc::new(param), body: Rc::new(self), span: None }
     }
 
     pub fn with_fn_ty_param(self, param: BindingParam) -> Self {
-        Self::FnType {
-            param: Rc::new(param),
-            cod: Rc::new(self),
-            span: None,
-        }
+        Self::FnType { param: Rc::new(param), cod: Rc::new(self), span: None }
     }
 
     pub fn with_arg(self, arg: Expr) -> Self {
-        Self::FnApp {
-            func: Rc::new(self),
-            arg: Rc::new(arg),
-            span: None,
-        }
+        Self::FnApp { func: Rc::new(self), arg: Rc::new(arg), span: None }
     }
 
     pub fn with_span(mut self, span: Span) -> Self {
@@ -340,8 +282,7 @@ impl Expr {
 
         args.into_iter().fold(self, |acc, arg| {
             let arg_span = arg.span().clone();
-            acc.with_arg(arg)
-                .with_span_opt(Span::hull_opts(self_span.clone(), arg_span))
+            acc.with_arg(arg).with_span_opt(Span::hull_opts(self_span.clone(), arg_span))
         })
     }
 
@@ -353,8 +294,7 @@ impl Expr {
 
         params.into_iter().rfold(self, |acc, par| {
             let par_span = par.span.clone();
-            acc.with_fn_param(par)
-                .with_span_opt(Span::hull_opts(par_span, self_span.clone()))
+            acc.with_fn_param(par).with_span_opt(Span::hull_opts(par_span, self_span.clone()))
         })
     }
 
@@ -366,8 +306,7 @@ impl Expr {
 
         params.into_iter().rfold(self, |acc, par| {
             let par_span = par.span.clone();
-            acc.with_fn_ty_param(par)
-                .with_span_opt(Span::hull_opts(par_span, self_span.clone()))
+            acc.with_fn_ty_param(par).with_span_opt(Span::hull_opts(par_span, self_span.clone()))
         })
     }
 
@@ -532,10 +471,7 @@ impl Expr {
     }
 
     pub fn is_path_to_ident(&self, ident: &Ident) -> bool {
-        if let Self::Path {
-            path: Path { components },
-            ..
-        } = self
+        if let Self::Path { path: Path { components }, .. } = self
             && let [component] = &components[..]
         {
             component == ident
@@ -546,10 +482,7 @@ impl Expr {
 
     #[expect(unused)]
     pub fn is_ident_with_name(&self, desired_name: &Ident) -> bool {
-        if let Self::Path {
-            path: Path { components },
-            ..
-        } = self
+        if let Self::Path { path: Path { components }, .. } = self
             && let [name] = &components[..]
         {
             name == desired_name
@@ -601,12 +534,7 @@ impl Expr {
                 Rc::make_mut(func).displace(amount);
                 Rc::make_mut(arg).displace(amount);
             }
-            Expr::Match {
-                arg,
-                cod_body,
-                arms,
-                ..
-            } => {
+            Expr::Match { arg, cod_body, arms, .. } => {
                 Rc::make_mut(arg).displace(amount);
                 Rc::make_mut(cod_body).displace(amount);
                 for arm in arms {
@@ -633,12 +561,7 @@ impl Expr {
                 Rc::make_mut(func).prefix_paths(prefix);
                 Rc::make_mut(arg).prefix_paths(prefix);
             }
-            Expr::Match {
-                arg,
-                cod_body,
-                arms,
-                ..
-            } => {
+            Expr::Match { arg, cod_body, arms, .. } => {
                 Rc::make_mut(arg).prefix_paths(prefix);
                 Rc::make_mut(cod_body).prefix_paths(prefix);
                 for arm in arms {
@@ -675,25 +598,14 @@ impl Expr {
                 .into_iter()
                 .chain(cod.dependencies(this_ind))
                 .collect(),
-            Expr::FnApp { func, arg, .. } => func
-                .dependencies(this_ind)
-                .into_iter()
-                .chain(arg.dependencies(this_ind))
-                .collect(),
-            Expr::Match {
-                arg,
-                cod_body,
-                arms,
-                ..
-            } => arg
+            Expr::FnApp { func, arg, .. } => {
+                func.dependencies(this_ind).into_iter().chain(arg.dependencies(this_ind)).collect()
+            }
+            Expr::Match { arg, cod_body, arms, .. } => arg
                 .dependencies(this_ind)
                 .into_iter()
                 .chain(cod_body.dependencies(this_ind))
-                .chain(
-                    arms.iter()
-                        .map(|arm| arm.body.dependencies(this_ind).into_iter())
-                        .flatten(),
-                )
+                .chain(arms.iter().map(|arm| arm.body.dependencies(this_ind).into_iter()).flatten())
                 .collect(),
         }
     }
@@ -702,27 +614,16 @@ impl Expr {
 impl Item {
     pub fn dependencies(&self, path: &Path) -> Vec<Path> {
         match self {
-            Item::Def { ty, val } => ty
-                .dependencies(None)
-                .into_iter()
-                .chain(val.dependencies(None))
-                .collect(),
+            Item::Def { ty, val } => {
+                ty.dependencies(None).into_iter().chain(val.dependencies(None)).collect()
+            }
             Item::Axiom { ty } => ty.dependencies(None),
-            Item::Inductive {
-                params,
-                ty,
-                constructors,
-            } => params
+            Item::Inductive { params, ty, constructors } => params
                 .iter()
                 .map(|p| p.ty.dependencies(None))
                 .flatten()
                 .chain(ty.dependencies(None))
-                .chain(
-                    constructors
-                        .iter()
-                        .map(|(_, c)| c.dependencies(Some(&path)))
-                        .flatten(),
-                )
+                .chain(constructors.iter().map(|(_, c)| c.dependencies(Some(&path))).flatten())
                 .collect(),
         }
     }
@@ -734,11 +635,7 @@ impl Item {
                 val.prefix_paths(prefix);
             }
             Item::Axiom { ty } => ty.prefix_paths(prefix),
-            Item::Inductive {
-                params,
-                ty,
-                constructors,
-            } => {
+            Item::Inductive { params, ty, constructors } => {
                 for param in params {
                     param.ty.prefix_paths(prefix);
                 }
@@ -755,10 +652,7 @@ impl Item {
 
 impl Module {
     pub fn new() -> Self {
-        Self {
-            submodules: Vec::new(),
-            items: IndexMap::new(),
-        }
+        Self { submodules: Vec::new(), items: IndexMap::new() }
     }
 
     pub fn load_from_path_and_name(
@@ -777,18 +671,14 @@ impl Module {
         if dir_path.is_file() {
             match sugared::Module::load_from_file(&dir_path, files) {
                 Ok(module) => Ok((dir_path, module.desugared(name)?)),
-                Err(e) => bail!(
-                    name.span.clone(),
-                    "failed to load module `{name}` from directory: {e}"
-                ),
+                Err(e) => {
+                    bail!(name.span.clone(), "failed to load module `{name}` from directory: {e}")
+                }
             }
         } else if file_path.is_file() {
             match sugared::Module::load_from_file(&file_path, files) {
                 Ok(module) => Ok((file_path, module.desugared(name)?)),
-                Err(e) => bail!(
-                    name.span.clone(),
-                    "failed to load module `{name}` from file: {e}"
-                ),
+                Err(e) => bail!(name.span.clone(), "failed to load module `{name}` from file: {e}"),
             }
         } else {
             bail!(
@@ -842,9 +732,7 @@ impl Module {
         } else if let Some(Item::Inductive { constructors, .. }) =
             self.items.get(&path.clone().parent())
             && (path.last_component().name == "elim"
-                || constructors
-                    .iter()
-                    .any(|(name, _ty)| path.last_component() == name))
+                || constructors.iter().any(|(name, _ty)| path.last_component() == name))
         {
             Some(path.clone().parent())
         } else {
@@ -866,11 +754,8 @@ impl Module {
         }
 
         if let Some(i) = visited.iter().position(|p| p == &path) {
-            let cycle: String = visited[i..]
-                .iter()
-                .map(Path::to_string)
-                .intersperse(String::from(" → "))
-                .collect();
+            let cycle: String =
+                visited[i..].iter().map(Path::to_string).intersperse(String::from(" → ")).collect();
 
             bail!(path.span(), "circular definition: `{cycle} → {path}`");
         }
@@ -881,11 +766,7 @@ impl Module {
 
         for path in item.dependencies(&path) {
             let Some(dependency_path) = self.get_dependency_path(&path) else {
-                bail!(
-                    path.span(),
-                    "`{}` not found in this scope",
-                    path.last_component()
-                )
+                bail!(path.span(), "`{}` not found in this scope", path.last_component())
             };
 
             self.topological_sort_visit(dependency_path, new_items, visited)?;
