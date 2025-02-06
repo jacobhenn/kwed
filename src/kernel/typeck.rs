@@ -552,17 +552,12 @@ impl Expr {
                         constructors,
                         ..
                     }) = md.items.get(&parent)
-                {
-                    let last_component = path.components.last().expect("paths are non-empty");
-
-                    if let Some((_name, ty)) = constructors
+                    && let Some(last_component) = path.components.last()
+                    && let Some((_name, ty)) = constructors
                         .iter()
                         .find(|(name, _ty)| name == last_component)
-                    {
-                        ty.clone().with_fn_ty_params(params.iter().cloned())
-                    } else {
-                        bail!(span.clone(), "cannot find item `{path}` in this scope")
-                    }
+                {
+                    ty.clone().with_fn_ty_params(params.iter().cloned())
                 } else if let Some((ind_path, ty)) = ctx.this_inductive()
                     && path == ind_path
                 {
