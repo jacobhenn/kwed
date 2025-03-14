@@ -4,6 +4,7 @@ use super::{Ident, Path, Span};
 
 use std::{fmt::Display, mem, rc::Rc};
 
+use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
 use codespan_reporting::files::SimpleFiles;
 use indexmap::IndexMap;
 use yansi::{Color, Paint};
@@ -12,6 +13,11 @@ use yansi::{Color, Paint};
 pub enum Expr {
     TypeType {
         level: usize,
+        span: Option<Span>,
+    },
+
+    Hole {
+        id: u128,
         span: Option<Span>,
     },
 
@@ -121,10 +127,17 @@ pub(crate) fn id_color(id: u128) -> Color {
     Color::Rgb(id.to_be_bytes()[0], id.to_be_bytes()[1], id.to_be_bytes()[2])
 }
 
+pub(crate) fn id_str(id: u128) -> String {
+    STANDARD_NO_PAD.encode(id.to_be_bytes())
+}
+
 impl Display for Expr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Expr::TypeType { level, .. } => write!(f, "Type {level}")?,
+            Expr::Hole { id, .. } => {
+                write!(f, "{}", format!("_{}", id_str(*id)).paint(id_color(*id).background()))?
+            }
             Expr::Var { id, name, .. } => write!(f, "{}", name.name.as_str().paint(id_color(*id)))?,
             // TODO: maybe do something fancy here to write just enough components to disambiguate
             Expr::Path { path, level, .. } => {
@@ -338,7 +351,8 @@ impl Expr {
             | Self::Var { .. }
             | Self::Path { .. }
             | Self::Match { .. }
-            | Self::Rec { .. } => true,
+            | Self::Rec { .. }
+            | Self::Hole { .. } => true,
             Self::Fn { .. } | Self::FnType { .. } | Self::FnApp { .. } => false,
         }
     }
@@ -494,6 +508,7 @@ impl Expr {
     pub fn span(&self) -> Option<Span> {
         match self {
             Expr::TypeType { span, .. }
+            | Expr::Hole { span, .. }
             | Expr::Var { span, .. }
             | Expr::Path { span, .. }
             | Expr::Fn { span, .. }
@@ -507,6 +522,7 @@ impl Expr {
     pub fn span_mut(&mut self) -> &mut Option<Span> {
         match self {
             Expr::TypeType { span, .. }
+            | Expr::Hole { span, .. }
             | Expr::Var { span, .. }
             | Expr::Path { span, .. }
             | Expr::Fn { span, .. }
@@ -519,7 +535,7 @@ impl Expr {
 
     pub fn displace(&mut self, amount: usize) {
         match self {
-            Expr::Var { .. } | Expr::Rec { .. } => (),
+            Expr::Var { .. } | Expr::Rec { .. } | Expr::Hole { .. } => (),
             Expr::Path { level, .. } => *level += amount,
             Expr::TypeType { level, .. } => *level += amount,
             Expr::Fn { param, body, .. } => {
@@ -546,9 +562,8 @@ impl Expr {
 
     pub fn prefix_paths(&mut self, prefix: &Ident) {
         match self {
-            Expr::Rec { .. } => (),
+            Expr::Rec { .. } | Expr::Hole { .. } | Expr::Var { .. } | Expr::TypeType { .. } => (),
             Expr::Path { path, .. } => *path = path.clone().resolved_in(prefix),
-            Expr::Var { .. } | Expr::TypeType { .. } => (),
             Expr::Fn { param, body, .. } => {
                 Rc::make_mut(param).ty.prefix_paths(prefix);
                 Rc::make_mut(body).prefix_paths(prefix);
@@ -573,8 +588,9 @@ impl Expr {
 
     pub fn dependencies(&self, this_ind: Option<&Path>) -> Vec<Path> {
         match self {
-            Expr::Rec { .. } => Vec::new(),
-            Expr::TypeType { .. } | Expr::Var { .. } => Vec::new(),
+            Expr::Rec { .. } | Expr::TypeType { .. } | Expr::Hole { .. } | Expr::Var { .. } => {
+                Vec::new()
+            }
             Expr::Path { path, .. } => {
                 if let Some(ind_path) = this_ind
                     && ind_path == path

@@ -5,8 +5,13 @@ use std::{iter, rc::Rc};
 use crate::{
     ast::desugared::{Expr, Item, Module},
     err::Result,
-    kernel::{context::Context, typeck::recursible_param_idxs},
+    kernel::{
+        context::{Context, State},
+        typeck::recursible_param_idxs,
+    },
 };
+
+use super::context::MutState;
 
 impl Expr {
     pub fn replace(&mut self, is_target: &impl Fn(&Expr) -> bool, sub: &Expr) {
@@ -16,7 +21,7 @@ impl Expr {
         }
 
         match self {
-            Expr::TypeType { .. } | Expr::Rec { .. } | Expr::Var { .. } => (),
+            Expr::TypeType { .. } | Expr::Rec { .. } | Expr::Var { .. } | Expr::Hole { .. } => (),
             Expr::Path { .. } => (),
             Expr::Fn { param, body, .. } => {
                 Rc::make_mut(param).ty.replace(is_target, sub);
@@ -63,7 +68,9 @@ impl Expr {
     // TODO: replace this with a more general method like `any_subexpr`
     pub fn contains_var(&self, search_id: u128) -> bool {
         match self {
-            Expr::TypeType { .. } | Expr::Path { .. } | Expr::Rec { .. } => false,
+            Expr::TypeType { .. } | Expr::Path { .. } | Expr::Rec { .. } | Expr::Hole { .. } => {
+                false
+            }
             Expr::Var { id, .. } => *id == search_id,
             Expr::Fn { param, body, .. } => {
                 param.ty.contains_var(search_id) || body.contains_var(search_id)
@@ -82,25 +89,28 @@ impl Expr {
         }
     }
 
-    pub fn eval(&mut self, md: &Module, ctx: &Context, depth: usize) -> Result<()> {
+    pub fn eval(&mut self, state: State, mut_state: &mut MutState) -> Result<()> {
         let _guard = log::enter();
         log!("eval: {self}");
 
         match self {
             Expr::TypeType { .. } => (),
+            Expr::Hole { .. } => {
+                let val = mut_state.resolve_hole(self);
+                // `value` is guaranteed to be in normal form because we only ever insert these
+                // values from inside of `syn_eq_impl` which operates on normal exprs
+                *self = val.clone();
+            }
             Expr::Var { .. } => (),
             Expr::Path { path, .. } => {
-                if let Some(Item::Def { val, .. }) = md.items.get(path) {
+                if let Some(Item::Def { val, .. }) = state.md.items.get(path) {
                     *self = val.clone();
                 }
             }
             Expr::Fn { param, body, .. } => {
-                Rc::make_mut(param).ty.eval(md, ctx, depth + 1)?;
-                Rc::make_mut(body).eval(
-                    md,
-                    &ctx.clone().with_var(param.id, param.ty.clone()),
-                    depth + 1,
-                )?;
+                Rc::make_mut(param).ty.eval(state.deeper(), mut_state)?;
+                let new_ctx = state.ctx.clone().with_var(param.id, param.ty.clone());
+                Rc::make_mut(body).eval(state.deeper().with_ctx(&new_ctx), mut_state)?;
 
                 // η-reduction: `[x] f x` reduces to `f` wherever `x` does not occur free in `f`.
                 if let Expr::FnApp { func, arg, .. } = Rc::make_mut(body)
@@ -112,35 +122,33 @@ impl Expr {
                 }
             }
             Expr::FnType { param, cod, .. } => {
-                Rc::make_mut(param).ty.eval(md, ctx, depth + 1)?;
-                Rc::make_mut(cod).eval(
-                    md,
-                    &ctx.clone().with_var(param.id, param.ty.clone()),
-                    depth + 1,
-                )?;
+                Rc::make_mut(param).ty.eval(state.deeper(), mut_state)?;
+                let new_ctx = state.ctx.clone().with_var(param.id, param.ty.clone());
+                Rc::make_mut(cod).eval(state.deeper().with_ctx(&new_ctx), mut_state)?;
             }
             Expr::FnApp { func, arg, .. } => {
-                Rc::make_mut(func).eval(md, ctx, depth + 1)?;
+                Rc::make_mut(func).eval(state.deeper(), mut_state)?;
                 if let Expr::Fn { param, body, .. } = Rc::make_mut(func) {
                     Rc::make_mut(body).substitute(param.id, arg);
-                    Rc::make_mut(body).eval(md, ctx, depth + 1)?;
+                    Rc::make_mut(body).eval(state.deeper(), mut_state)?;
 
                     *self = (**body).clone();
                 } else {
-                    Rc::make_mut(arg).eval(md, ctx, depth + 1)?;
+                    Rc::make_mut(arg).eval(state.deeper(), mut_state)?;
                 }
             }
             Expr::Match { arg, arms, .. } => {
                 let mut evald_arg = (**arg).clone();
-                evald_arg.eval(md, ctx, depth + 1)?;
+                evald_arg.eval(state.deeper(), mut_state)?;
 
                 let Expr::Path { path: cons_path, .. } = evald_arg.head() else {
                     *arg = Rc::new(evald_arg);
                     for arm in arms {
-                        let ctx = ctx
+                        let new_ctx = state
+                            .ctx
                             .clone()
                             .with_rec_vals(arm.cons_args.iter().map(|(_name, id)| (*id, None)));
-                        arm.body.eval(md, &ctx, depth + 1)?;
+                        arm.body.eval(state.deeper().with_ctx(&new_ctx), mut_state)?;
                     }
                     return Ok(());
                 };
@@ -152,7 +160,7 @@ impl Expr {
                     params: ind_def_params,
                     constructors: ind_def_constructors,
                     ..
-                }) = md.items.get(&ind_def_path)
+                }) = state.md.items.get(&ind_def_path)
                 else {
                     return Ok(());
                 };
@@ -176,9 +184,9 @@ impl Expr {
                     evald_arg.args().into_iter().skip(ind_def_num_params).cloned(),
                 );
 
-                let mut res_ctx = ctx.clone();
+                let mut res_ctx = state.ctx.clone();
 
-                for i in recursible_param_idxs(&ind_def_path, ind_def_params, cons_ty) {
+                for i in recursible_param_idxs(&ind_def_path, &ind_def_params, cons_ty) {
                     let rec_cons_arg_id = matching_arm.cons_args[i].1;
 
                     let rec_call_arg = evald_arg.args()[i + ind_def_num_params].clone();
@@ -193,13 +201,13 @@ impl Expr {
                     res_ctx = res_ctx.clone().with_rec_val(rec_cons_arg_id, Some(rec_val));
                 }
 
-                res.eval(md, &res_ctx, depth + 1)?;
+                res.eval(state.deeper().with_ctx(&res_ctx), mut_state)?;
 
                 *self = res;
             }
             Expr::Rec { arg_id, .. } => {
-                if let Some(mut rec_val) = ctx.val_of_rec(*arg_id).cloned() {
-                    rec_val.eval(md, ctx, depth + 1)?;
+                if let Some(mut rec_val) = state.ctx.val_of_rec(*arg_id).cloned() {
+                    rec_val.eval(state.deeper(), mut_state)?;
                     *self = rec_val;
                 }
             }
@@ -212,26 +220,28 @@ impl Expr {
 }
 
 impl Item {
-    pub fn eval(&mut self, md: &mut Module) -> Result<()> {
+    pub fn eval(&mut self, md: &mut Module, mut_state: &mut MutState) -> Result<()> {
         log!("eval: {self}");
+
+        let state = State { md, ctx: &Context::Empty, depth: 0 };
 
         match self {
             Item::Def { ty, val, .. } => {
-                ty.eval(md, &Context::Empty, 0)?;
-                val.eval(md, &Context::Empty, 0)?;
+                ty.eval(state, mut_state)?;
+                val.eval(state, mut_state)?;
             }
-            Item::Axiom { ty, .. } => ty.eval(md, &Context::Empty, 0)?,
+            Item::Axiom { ty, .. } => ty.eval(state, mut_state)?,
             Item::Inductive { params, ty, constructors, .. } => {
                 let mut param_ctx = Context::Empty;
                 for param in params {
-                    param.ty.eval(md, &param_ctx, 0)?;
+                    param.ty.eval(state.with_ctx(&param_ctx), mut_state)?;
                     param_ctx = param_ctx.with_var(param.id, param.ty.clone());
                 }
 
-                ty.eval(md, &Context::Empty, 0)?;
+                ty.eval(state.with_ctx(&param_ctx), mut_state)?;
 
                 for (_name, ty) in constructors {
-                    ty.eval(md, &Context::Empty, 0)?;
+                    ty.eval(state.with_ctx(&param_ctx), mut_state)?;
                 }
             }
         }

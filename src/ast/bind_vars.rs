@@ -9,11 +9,7 @@ use std::rc::Rc;
 #[derive(Debug, Clone)]
 enum Context {
     Empty,
-    Var {
-        outer: Box<Self>,
-        name: Ident,
-        id: u128,
-    },
+    Var { outer: Rc<Self>, name: Ident, id: u128 },
 }
 
 impl Context {
@@ -31,38 +27,30 @@ impl Context {
     }
 
     fn with_var(self, name: Ident, id: u128) -> Self {
-        Self::Var {
-            outer: Box::new(self),
-            name,
-            id,
-        }
+        Self::Var { outer: Rc::new(self), name, id }
     }
 
     fn with_vars(self, vars: impl IntoIterator<Item = (Ident, u128)>) -> Self {
-        vars.into_iter()
-            .fold(self, |acc, (name, id)| acc.with_var(name, id))
+        vars.into_iter().fold(self, |acc, (name, prev_id)| acc.with_var(name, prev_id))
     }
 }
 
 impl Arm {
     fn bind_vars(&mut self, ctx: &Context) {
-        self.body
-            .bind_vars(&ctx.clone().with_vars(self.cons_args.iter().cloned()))
+        self.body.bind_vars(
+            &ctx.clone().with_vars(self.cons_args.iter().map(|(name, id)| (name.clone(), *id))),
+        )
     }
 }
 
 impl Expr {
     fn bind_vars(&mut self, ctx: &Context) {
         match self {
-            Expr::TypeType { .. } | Expr::Var { .. } => (),
+            Expr::TypeType { .. } | Expr::Var { .. } | Expr::Hole { .. } => (),
             Expr::Path { path, span, .. } => {
                 if let [name] = &mut path.components[..] {
                     if let Some(id) = ctx.id(name) {
-                        *self = Self::Var {
-                            id,
-                            name: name.clone(),
-                            span: span.clone(),
-                        };
+                        *self = Self::Var { id, name: name.clone(), span: span.clone() };
                     }
                 }
             }
@@ -75,7 +63,7 @@ impl Expr {
                 Rc::make_mut(param).ty.bind_vars(ctx);
 
                 let ctx = Context::Var {
-                    outer: Box::new(ctx.clone()),
+                    outer: Rc::new(ctx.clone()),
                     name: param.name.clone(),
                     id: param.id,
                 };
@@ -86,13 +74,7 @@ impl Expr {
                 Rc::make_mut(func).bind_vars(ctx);
                 Rc::make_mut(arg).bind_vars(ctx);
             }
-            Expr::Match {
-                arg,
-                cod_body,
-                arms,
-                cod_pars,
-                ..
-            } => {
+            Expr::Match { arg, cod_body, arms, cod_pars, .. } => {
                 Rc::make_mut(arg).bind_vars(ctx);
                 let cod_ctx = ctx.clone().with_vars(cod_pars.iter().cloned());
                 Rc::make_mut(cod_body).bind_vars(&cod_ctx);
@@ -100,9 +82,7 @@ impl Expr {
                     arm.bind_vars(ctx);
                 }
             }
-            Expr::Rec {
-                arg_id, arg_name, ..
-            } => {
+            Expr::Rec { arg_id, arg_name, .. } => {
                 if let Some(id) = ctx.id(arg_name) {
                     *arg_id = id;
                 }
@@ -119,17 +99,12 @@ impl Item {
                 val.bind_vars(&Context::Empty);
             }
             Item::Axiom { ty, .. } => ty.bind_vars(&Context::Empty),
-            Item::Inductive {
-                params,
-                ty,
-                constructors,
-                ..
-            } => {
+            Item::Inductive { params, ty, constructors, .. } => {
                 let mut ctx = Context::Empty;
                 for param in params {
                     param.ty.bind_vars(&ctx);
                     ctx = Context::Var {
-                        outer: Box::new(ctx),
+                        outer: Rc::new(ctx),
                         name: param.name.clone(),
                         id: param.id,
                     };

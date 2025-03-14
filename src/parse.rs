@@ -12,10 +12,7 @@ use std::collections::HashMap;
 use chumsky::prelude::*;
 
 fn comment() -> impl Parser<char, (), Error = Simple<char>> + Clone {
-    just("//")
-        .then(just('\n').not().repeated())
-        .ignored()
-        .debug("comment")
+    just("//").then(just('\n').not().repeated()).ignored().debug("comment")
 }
 
 fn pad() -> impl Parser<char, (), Error = Simple<char>> + Clone {
@@ -41,6 +38,7 @@ const RESERVED_IDENTS: &[&str] = &[
     "=>",
     "→",
     "//",
+    "_",
 ];
 
 impl Ident {
@@ -53,21 +51,14 @@ impl Ident {
             .collect::<String>()
             .try_map(|name, span: Range<usize>| {
                 if RESERVED_IDENTS.contains(&name.as_str()) {
-                    Err(Simple::custom(
-                        span,
-                        format!("`{name}` is a reserved keyword"),
-                    ))
+                    Err(Simple::custom(span, format!("`{name}` is a reserved keyword")))
                 } else {
                     Ok(name)
                 }
             })
             .map_with_span(move |name, range| Self {
                 name,
-                span: Some(Span {
-                    file_id,
-                    start: range.start,
-                    end: range.end,
-                }),
+                span: Some(Span { file_id, start: range.start, end: range.end }),
             })
             .labelled("identifier")
             .debug("identifier")
@@ -83,10 +74,7 @@ impl Path {
                 if let [name] = &components[..]
                     && name.name.parse::<i64>().is_ok()
                 {
-                    Err(Simple::custom(
-                        span,
-                        format!("a path may not be a single digit string"),
-                    ))
+                    Err(Simple::custom(span, format!("a path may not be a single digit string")))
                 } else {
                     Ok(components)
                 }
@@ -105,11 +93,7 @@ impl Arm {
             .then(Ident::parse(file_id).padded_by(pad()).repeated())
             .then_ignore(just("=>").padded_by(pad()))
             .then(expr)
-            .map(|((constructor, cons_args), body)| Self {
-                constructor,
-                cons_args,
-                body,
-            })
+            .map(|((constructor, cons_args), body)| Self { constructor, cons_args, body })
     }
 }
 
@@ -124,11 +108,7 @@ impl Field {
             .then(Ident::parse(file_id))
             .then_ignore(just(':').padded_by(pad()))
             .then(expr)
-            .map(|((include, name), ty)| Self {
-                include: include.is_some(),
-                name,
-                ty,
-            })
+            .map(|((include, name), ty)| Self { include: include.is_some(), name, ty })
     }
 }
 
@@ -235,14 +215,7 @@ impl Item {
                     .recover_with(nested_delimiters('{', '}', [], |_| Expr::Error)),
             )
             .map(|(((path, args), ty), val)| {
-                (
-                    path,
-                    Self::Def {
-                        args: args.unwrap_or_default(),
-                        ty,
-                        val,
-                    },
-                )
+                (path, Self::Def { args: args.unwrap_or_default(), ty, val })
             })
             .labelled("definition")
             .debug("definition")
@@ -270,14 +243,7 @@ impl Item {
                     .recover_with(nested_delimiters('{', '}', [], |_| None)),
             )
             .map(|(((path, params), ty), fields)| {
-                (
-                    path,
-                    Self::Struct {
-                        params: params.unwrap_or_else(Params::default),
-                        ty,
-                        fields,
-                    },
-                )
+                (path, Self::Struct { params: params.unwrap_or_else(Params::default), ty, fields })
             })
     }
 
@@ -300,8 +266,7 @@ impl Expr {
                 text::int(10)
                     .padded_by(pad())
                     .try_map(|s: String, span| {
-                        s.parse::<usize>()
-                            .map_err(|e| Simple::custom(span, format!("{e}")))
+                        s.parse::<usize>().map_err(|e| Simple::custom(span, format!("{e}")))
                     })
                     .or_not(),
             )
@@ -317,8 +282,7 @@ impl Expr {
             .then(
                 just('@')
                     .ignore_then(text::int(10).try_map(|s: String, span| {
-                        s.parse::<usize>()
-                            .map_err(|e| Simple::custom(span, format!("{e}")))
+                        s.parse::<usize>().map_err(|e| Simple::custom(span, format!("{e}")))
                     }))
                     .or_not(),
             )
@@ -358,11 +322,7 @@ impl Expr {
             .delimited_by(just('('), just(')'))
             .or(Expr::parse_atomic(file_id, expr.clone()).map(|ty| {
                 let span = ty.span();
-                Params(vec![Param {
-                    names: vec![Ident::blank()],
-                    ty,
-                    span,
-                }])
+                Params(vec![Param { names: vec![Ident::blank()], ty, span }])
             }))
             .then_ignore(just("→").padded_by(pad()))
             .then(expr)
@@ -381,11 +341,7 @@ impl Expr {
         expr: impl Parser<char, Expr, Error = Simple<char>> + Clone + 'a,
     ) -> impl Parser<char, Self, Error = Simple<char>> + 'a {
         Expr::parse_atomic(file_id, expr.clone())
-            .then(
-                Expr::parse_atomic(file_id, expr.clone())
-                    .padded_by(pad())
-                    .repeated(),
-            )
+            .then(Expr::parse_atomic(file_id, expr.clone()).padded_by(pad()).repeated())
             .then(
                 Ident::parse(file_id)
                     .padded_by(pad())
@@ -430,24 +386,19 @@ impl Expr {
                     .allow_trailing()
                     .delimited_by(just('{'), just('}')),
             )
-            .map_with_span(
-                move |(((arg, cod_pars), cod_body), arms), range| Self::Match {
-                    arg: Box::new(arg),
-                    cod_pars,
-                    cod_body: Box::new(cod_body),
-                    arms,
-                    span: Span::new(file_id, range),
-                },
-            )
+            .map_with_span(move |(((arg, cod_pars), cod_body), arms), range| Self::Match {
+                arg: Box::new(arg),
+                cod_pars,
+                cod_body: Box::new(cod_body),
+                arms,
+                span: Span::new(file_id, range),
+            })
     }
 
     pub fn parse_rec<'a>(file_id: usize) -> impl Parser<char, Self, Error = Simple<char>> + 'a {
-        text::keyword("rec")
-            .ignore_then(Ident::parse(file_id).padded_by(pad()))
-            .map_with_span(move |arg, range| Self::Rec {
-                arg_name: arg,
-                span: Span::new(file_id, range),
-            })
+        text::keyword("rec").ignore_then(Ident::parse(file_id).padded_by(pad())).map_with_span(
+            move |arg, range| Self::Rec { arg_name: arg, span: Span::new(file_id, range) },
+        )
     }
 
     pub fn parse_number(file_id: usize) -> impl Parser<char, Self, Error = Simple<char>> {
@@ -507,9 +458,7 @@ impl Expr {
     pub fn parse_in_parens<'a>(
         expr: impl Parser<char, Expr, Error = Simple<char>> + 'a,
     ) -> impl Parser<char, Self, Error = Simple<char>> + 'a {
-        expr.padded_by(pad())
-            .delimited_by(just('('), just(')'))
-            .debug("expr in parens")
+        expr.padded_by(pad()).delimited_by(just('('), just(')')).debug("expr in parens")
     }
 
     pub fn parse_atomic<'a>(
@@ -518,6 +467,10 @@ impl Expr {
     ) -> impl Parser<char, Self, Error = Simple<char>> + 'a {
         choice((
             Self::parse_type_type(file_id),
+            just('_').map_with_span(move |_, range| Expr::Hole {
+                id: fastrand::u128(..),
+                span: Span::new(file_id, range),
+            }),
             Self::parse_rec(file_id),
             Self::parse_match(file_id, expr.clone()),
             Self::parse_path(file_id),
@@ -560,10 +513,7 @@ impl PathTree {
                         )
                         .or_not(),
                 )
-                .map(|(initial_path, children)| Self {
-                    initial_path,
-                    children,
-                })
+                .map(|(initial_path, children)| Self { initial_path, children })
         })
     }
 }
@@ -594,11 +544,7 @@ impl Module {
     ) -> impl Parser<char, HashMap<String, Expr>, Error = Simple<char>> {
         text::keyword("notation")
             .ignore_then(Ident::parse(file_id).padded_by(pad()).map(|i| i.name))
-            .then(
-                Expr::parse(file_id)
-                    .padded_by(pad())
-                    .delimited_by(just('{'), just('}')),
-            )
+            .then(Expr::parse(file_id).padded_by(pad()).delimited_by(just('{'), just('}')))
             .padded_by(pad())
             .repeated()
             .collect()
@@ -627,12 +573,7 @@ fn test_ident_parse() {
     assert_matches!(Ident::parse(0).then_ignore(end()).parse("=>"), Ok(..));
     assert_matches!(Ident::parse(0).then_ignore(end()).parse("z =>"), Err(..));
     assert_matches!(Ident::parse(0).then_ignore(end()).parse("let z"), Err(..));
-    assert_matches!(
-        Ident::parse(0)
-            .then_ignore(end())
-            .parse("refl z => refl f z"),
-        Err(..)
-    );
+    assert_matches!(Ident::parse(0).then_ignore(end()).parse("refl z => refl f z"), Err(..));
     assert_matches!(Ident::parse(0).then_ignore(end()).parse("let"), Err(..));
     assert_matches!(Ident::parse(0).then_ignore(end()).parse("jones"), Ok(..));
     assert_matches!(Ident::parse(0).then_ignore(end()).parse("ℝ=𝝳"), Ok(..));
@@ -647,28 +588,14 @@ fn test_path_parse() {
 
 #[test]
 fn test_parse_submodules() {
+    assert_matches!(Module::parse_submodules(0).then_ignore(end()).parse("mod { Core } "), Ok(..));
     assert_matches!(
-        Module::parse_submodules(0)
-            .then_ignore(end())
-            .parse("mod { Core } "),
+        Module::parse_submodules(0).then_ignore(end()).parse("mod { Core, Nat }"),
         Ok(..)
     );
+    assert_matches!(Module::parse_submodules(0).then_ignore(end()).parse("mod { }"), Err(..));
     assert_matches!(
-        Module::parse_submodules(0)
-            .then_ignore(end())
-            .parse("mod { Core, Nat }"),
-        Ok(..)
-    );
-    assert_matches!(
-        Module::parse_submodules(0)
-            .then_ignore(end())
-            .parse("mod { }"),
-        Err(..)
-    );
-    assert_matches!(
-        Module::parse_submodules(0)
-            .then_ignore(end())
-            .parse("mod { Core,, Nat }"),
+        Module::parse_submodules(0).then_ignore(end()).parse("mod { Core,, Nat }"),
         Err(..)
     );
 }

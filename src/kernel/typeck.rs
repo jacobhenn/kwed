@@ -1,11 +1,13 @@
+use yansi::Paint;
+
 use crate::{
     ast::{
-        desugared::{Arm, BindingParam, Expr, Item, Module},
+        desugared::{id_color, Arm, BindingParam, Expr, Item, Module},
         Ident, Path, Span,
     },
     bail,
     err::Result,
-    kernel::context::Context,
+    kernel::context::{Context, MutState, State},
     log,
 };
 
@@ -37,9 +39,8 @@ fn match_ty(
     cod_body: &Expr,
     arms: &[Arm],
     match_span: &Option<Span>,
-    md: &Module,
-    ctx: &Context,
-    depth: usize,
+    state: State,
+    mut_state: &mut MutState,
 ) -> Result<Expr> {
     // The internal documentation of this function will use the example of an inductively-defined
     // type of lists of given length, called `Vec`. The definition in `kwed` syntax is as follows:
@@ -60,9 +61,9 @@ fn match_ty(
     // ```
 
     // the type of the scrutinee: `Vec A n`
-    let mut arg_ty = arg.ty(md, ctx, depth + 1)?;
+    let mut arg_ty = arg.ty(state.deeper(), mut_state)?;
     // evaluated so that we can match on type aliases
-    arg_ty.eval(md, ctx, depth + 1)?;
+    arg_ty.eval(state.deeper(), mut_state)?;
 
     let ind_ty = arg_ty.head();
 
@@ -85,7 +86,7 @@ fn match_ty(
         params: ind_def_params,
         ty: ind_def_ty,
         constructors: ind_def_constructors,
-    }) = md.items.get(ind_def_path)
+    }) = state.md.items.get(ind_def_path)
     else {
         bail!(arg.span(), "cannot match on `{}` - not in scope or not inductive", ind_ty);
     };
@@ -152,13 +153,14 @@ fn match_ty(
         .with_args(ind_def_indices.clone().cloned().map(BindingParam::to_var));
 
     // the context in which to type-check the codomain: `{n: ℕ, v: Vec A n}`
-    let cod_ctx = ctx
+    let cod_ctx = state
+        .ctx
         .clone()
         .with_vars(cod_par_ids.clone().zip(cod_idx_par_tys))
         .with_var(*cod_final_par_id, cod_final_par_ty);
 
     // TODO: do I need to do something with this level?
-    cod_body.expect_ty_ty(md, &cod_ctx, depth + 1)?;
+    cod_body.expect_ty_ty(state.deeper().with_ctx(&cod_ctx), mut_state)?;
 
     // -- check exhaustivity
 
@@ -243,7 +245,7 @@ fn match_ty(
 
         // the context in which to type-check the body of this arm. initially, this context is
         //     `{n': ℕ, v': Vec A n', a': A}`
-        let mut arm_ctx = ctx.clone().with_vars(
+        let mut arm_ctx = state.ctx.clone().with_vars(
             cons_arg_ids
                 .clone()
                 .zip(cons_arg_tys.clone())
@@ -285,7 +287,7 @@ fn match_ty(
         // the elaborated type of the scrutinee given that in this branch we know some of its
         // indices to have been constructed from indices of a lower structural component:
         //     `Vec A (ℕ.suc n')`
-        let cod_final_arg_ty = cod_final_arg.ty(md, &arm_ctx, depth + 1)?;
+        let cod_final_arg_ty = cod_final_arg.ty(state.deeper().with_ctx(&arm_ctx), mut_state)?;
 
         // the elaborated indices of the scrutinee: `(ℕ.suc n')`
         let cod_idx_args = cod_final_arg_ty.args().into_iter().skip(ind_def_num_params);
@@ -298,7 +300,7 @@ fn match_ty(
             .with_substitutions(cod_par_ids.clone(), cod_idx_args.cloned())
             .with_substitution(*cod_final_par_id, cod_final_arg);
 
-        arm.body.expect_ty(&arm_expected_ty, md, &arm_ctx, depth + 1)?;
+        arm.body.expect_ty(&arm_expected_ty, state.deeper().with_ctx(&arm_ctx), mut_state)?;
     }
 
     // the resulting type of the entire match expression, obtained by applying the type family
@@ -335,8 +337,17 @@ impl SynEqCtx {
 }
 
 impl Expr {
-    fn syn_eq_impl(lhs: &Self, rhs: &Self, ctx: &SynEqCtx) -> bool {
+    fn hole_syn_eq(hole_id: u128, rhs: &Self, state: &mut MutState) -> bool {
+        // TODO: figure out how this interacts with free variables
+        log!("filling hole {} with {rhs}", "_".paint(id_color(hole_id).background()));
+        state.hole_vals.insert(hole_id, rhs.clone());
+        true
+    }
+
+    fn syn_eq_impl(lhs: &Self, rhs: &Self, ctx: &SynEqCtx, state: &mut MutState) -> bool {
         match (lhs, rhs) {
+            (Expr::Hole { id, .. }, rhs) => Self::hole_syn_eq(*id, rhs, state),
+            (lhs, Expr::Hole { id, .. }) => Self::hole_syn_eq(*id, lhs, state),
             (Expr::TypeType { level: ll, .. }, Expr::TypeType { level: rl, .. }) => ll == rl,
             (Expr::Var { id: lid, .. }, Expr::Var { id: rid, .. })
             | (Expr::Rec { arg_id: lid, .. }, Expr::Rec { arg_id: rid, .. }) => {
@@ -347,28 +358,31 @@ impl Expr {
                 Expr::Fn { param: lparam, body: lbody, .. },
                 Expr::Fn { param: rparam, body: rbody, .. },
             ) => {
-                if !Self::syn_eq_impl(&lparam.ty, &rparam.ty, ctx) {
+                if !Self::syn_eq_impl(&lparam.ty, &rparam.ty, ctx, state) {
                     return false;
                 }
 
                 let body_ctx = ctx.clone().with_pair([lparam.id, rparam.id]);
-                Self::syn_eq_impl(lbody, rbody, &body_ctx)
+                Self::syn_eq_impl(lbody, rbody, &body_ctx, state)
             }
             (
                 Expr::FnType { param: lparam, cod: lcod, .. },
                 Expr::FnType { param: rparam, cod: rcod, .. },
             ) => {
-                if !Self::syn_eq_impl(&lparam.ty, &rparam.ty, ctx) {
+                if !Self::syn_eq_impl(&lparam.ty, &rparam.ty, ctx, state) {
                     return false;
                 }
 
                 let cod_ctx = ctx.clone().with_pair([lparam.id, rparam.id]);
-                Self::syn_eq_impl(lcod, rcod, &cod_ctx)
+                Self::syn_eq_impl(lcod, rcod, &cod_ctx, state)
             }
             (
                 Expr::FnApp { func: lfunc, arg: larg, .. },
                 Expr::FnApp { func: rfunc, arg: rarg, .. },
-            ) => Self::syn_eq_impl(lfunc, rfunc, ctx) && Self::syn_eq_impl(larg, rarg, ctx),
+            ) => {
+                Self::syn_eq_impl(lfunc, rfunc, ctx, state)
+                    && Self::syn_eq_impl(larg, rarg, ctx, state)
+            }
 
             (
                 Expr::Match {
@@ -386,7 +400,7 @@ impl Expr {
                     ..
                 },
             ) => {
-                if !Self::syn_eq_impl(larg, rarg, ctx) {
+                if !Self::syn_eq_impl(larg, rarg, ctx, state) {
                     return false;
                 }
 
@@ -394,7 +408,7 @@ impl Expr {
                     iter::zip(lcod_pars, rcod_pars).map(|((_, lid), (_, rid))| [*lid, *rid]),
                 );
 
-                if !Self::syn_eq_impl(lcod_body, rcod_body, &cod_body_ctx) {
+                if !Self::syn_eq_impl(lcod_body, rcod_body, &cod_body_ctx, state) {
                     return false;
                 }
 
@@ -404,7 +418,7 @@ impl Expr {
                             .map(|((_, lid), (_, rid))| [*lid, *rid]),
                     );
 
-                    if !Self::syn_eq_impl(&larm.body, &rarm.body, &arm_body_ctx) {
+                    if !Self::syn_eq_impl(&larm.body, &rarm.body, &arm_body_ctx, state) {
                         return false;
                     }
                 }
@@ -415,12 +429,12 @@ impl Expr {
         }
     }
 
-    pub fn syn_eq(lhs: &Self, rhs: &Self) -> bool {
-        Self::syn_eq_impl(lhs, rhs, &SynEqCtx::Empty)
+    pub fn syn_eq(lhs: &Self, rhs: &Self, state: &mut MutState) -> bool {
+        Self::syn_eq_impl(lhs, rhs, &SynEqCtx::Empty, state)
     }
 
-    fn expect_ty(&self, expected: &Self, md: &Module, ctx: &Context, depth: usize) -> Result<()> {
-        let expected_ty = expected.ty(md, ctx, depth + 1)?;
+    fn expect_ty(&self, expected: &Self, state: State, mut_state: &mut MutState) -> Result<()> {
+        let expected_ty = expected.ty(state.deeper(), mut_state)?;
         if !expected_ty.is_type_type() {
             if expected.span().is_none() {
                 log!("expectation failed on spanless ty `{self}`");
@@ -430,18 +444,18 @@ impl Expr {
         }
 
         let mut expected_evald = expected.clone();
-        expected_evald.eval(md, ctx, depth + 1)?;
+        expected_evald.eval(state.deeper(), mut_state)?;
 
-        let found = self.ty(md, ctx, depth + 1)?;
+        let found = self.ty(state.deeper(), mut_state)?;
         let mut found_evald = found.clone();
-        found_evald.eval(md, ctx, depth + 1)?;
+        found_evald.eval(state.deeper(), mut_state)?;
 
         if let Expr::TypeType { level: found_level, .. } = found_evald
             && let Expr::TypeType { level: expected_level, .. } = expected_evald
             && found_level <= expected_level
         {
             return Ok(());
-        } else if Self::syn_eq(&found_evald, &expected_evald) {
+        } else if Self::syn_eq(&found_evald, &expected_evald, mut_state) {
             return Ok(());
         }
 
@@ -460,9 +474,9 @@ impl Expr {
         )
     }
 
-    fn expect_ty_ty(&self, md: &Module, ctx: &Context, depth: usize) -> Result<usize> {
-        let mut found = self.ty(md, ctx, depth + 1)?;
-        found.eval(md, ctx, depth + 1)?;
+    fn expect_ty_ty(&self, state: State, mut_state: &mut MutState) -> Result<usize> {
+        let mut found = self.ty(state.deeper(), mut_state)?;
+        found.eval(state.deeper(), mut_state)?;
 
         match found {
             Expr::TypeType { level, .. } => Ok(level),
@@ -471,30 +485,44 @@ impl Expr {
     }
 
     // TODO: verify assumption that this returns exprs in normal form
-    pub fn ty(&self, md: &Module, ctx: &Context, depth: usize) -> Result<Self> {
+    pub fn ty(&self, state: State, mut_state: &mut MutState) -> Result<Self> {
         let _guard = log::enter();
         log!("ty: {self}");
 
         let res = match self {
             Self::TypeType { level, .. } => Self::TypeType { level: level + 1, span: None },
+            Self::Hole { id, span } => {
+                mut_state.all_holes.insert((*id, *span));
+                if let Some(ty) = mut_state.hole_tys.get(id) {
+                    mut_state.resolve_hole(ty).clone()
+                } else {
+                    let new_id = fastrand::u128(..);
+                    let new_ty = Self::Hole { id: new_id, span: None };
+                    mut_state.hole_tys.insert(*id, new_ty.clone());
+                    mut_state.all_holes.insert((new_id, None));
+                    new_ty
+                }
+            }
             Self::Var { id, .. } => {
-                let ty = ctx.ty_of_var(*id).expect("variables are bound");
+                let Some(ty) = state.ctx.ty_of_var(*id) else {
+                    panic!("unbound variable. ctx: {}", state.ctx);
+                };
                 ty.clone()
             }
             Self::Path { path, span, level } => {
-                let mut res = if let Some(item) = md.items.get(path)
+                let mut res = if let Some(item) = state.md.items.get(path)
                     && let Some(ty) = item.ty()
                 {
                     ty
                 } else if let parent = path.clone().parent()
                     && let Some(Item::Inductive { params, constructors, .. }) =
-                        md.items.get(&parent)
+                        state.md.items.get(&parent)
                     && let Some(last_component) = path.components.last()
                     && let Some((_name, ty)) =
                         constructors.iter().find(|(name, _ty)| name == last_component)
                 {
                     ty.clone().with_fn_ty_params(params.iter().cloned())
-                } else if let Some((ind_path, ty)) = ctx.this_inductive()
+                } else if let Some((ind_path, ty)) = state.ctx.this_inductive()
                     && path == ind_path
                 {
                     ty.clone()
@@ -507,10 +535,10 @@ impl Expr {
             }
             // TODO: clean this up
             Self::Fn { param, body, .. } => {
-                param.ty.expect_ty_ty(md, ctx, depth + 1)?;
+                param.ty.expect_ty_ty(state.deeper(), mut_state)?;
 
-                let mut cod =
-                    body.ty(md, &ctx.clone().with_var(param.id, param.ty.clone()), depth + 1)?;
+                let new_ctx = state.ctx.clone().with_var(param.id, param.ty.clone());
+                let mut cod = body.ty(state.deeper().with_ctx(&new_ctx), mut_state)?;
 
                 let mut body = (**body).clone();
                 let new_id = fastrand::u128(..);
@@ -525,16 +553,16 @@ impl Expr {
                 }
             }
             Self::FnType { param, cod, .. } => {
-                let param_level = param.ty.expect_ty_ty(md, ctx, depth + 1)?;
+                let param_level = param.ty.expect_ty_ty(state.deeper(), mut_state)?;
 
-                let ctx = ctx.clone().with_var(param.id, param.ty.clone());
-                let cod_level = cod.expect_ty_ty(md, &ctx, depth + 1)?;
+                let new_ctx = state.ctx.clone().with_var(param.id, param.ty.clone());
+                let cod_level = cod.expect_ty_ty(state.deeper().with_ctx(&new_ctx), mut_state)?;
 
                 Self::TypeType { level: cmp::max(param_level, cod_level), span: None }
             }
             Self::FnApp { func, arg, .. } => {
-                let mut func_type = func.ty(md, ctx, depth + 1)?;
-                func_type.eval(md, ctx, depth + 1)?;
+                let mut func_type = func.ty(state.deeper(), mut_state)?;
+                func_type.eval(state.deeper(), mut_state)?;
 
                 let Self::FnType { param, mut cod, .. } = func_type else {
                     bail!(
@@ -543,18 +571,18 @@ impl Expr {
                     );
                 };
 
-                arg.expect_ty(&param.ty, md, ctx, depth + 1)?;
+                arg.expect_ty(&param.ty, state.deeper(), mut_state)?;
 
                 Rc::make_mut(&mut cod).substitute(param.id, arg);
                 Rc::unwrap_or_clone(cod)
             }
             Expr::Match { arg, cod_pars, cod_body, arms, span } => {
-                match_ty(arg, cod_pars, cod_body, arms, span, md, ctx, depth)?
+                match_ty(arg, cod_pars, cod_body, arms, span, state.deeper(), mut_state)?
             }
             Expr::Rec { arg_name, arg_id, .. } => {
-                if let Some(ty_of_rec) = ctx.ty_of_rec(*arg_id) {
+                if let Some(ty_of_rec) = state.ctx.ty_of_rec(*arg_id) {
                     ty_of_rec.clone()
-                } else if ctx.ty_of_var(*arg_id).is_some() {
+                } else if state.ctx.ty_of_var(*arg_id).is_some() {
                     bail!(
                         arg_name.span.clone(), "variable `{arg_name}` is not recursible";
                         @note "you may be using `rec` incorrectly. consult the documentation"
@@ -573,6 +601,9 @@ impl Expr {
     fn check_positivity_impl(&self, this_ind: &Path, in_dom: bool) -> Result<()> {
         match self {
             Expr::TypeType { .. } | Expr::Var { .. } => (),
+            Expr::Hole { .. } => {
+                bail!(self.span(), "holes may not appear in positive position in constructor types");
+            }
             Expr::Path { path, .. } => {
                 if path == this_ind && in_dom {
                     bail!(
@@ -624,31 +655,36 @@ impl Item {
         }
     }
 
-    pub fn type_check(&self, path: &Path, md: &Module) -> Result<()> {
+    pub fn type_check(&self, path: &Path, md: &Module, mut_state: &mut MutState) -> Result<()> {
+        log!("typeck: {self}");
+
+        let state = State { md, ctx: &Context::Empty, depth: 0 };
+
         match self {
-            Item::Def { ty, val, .. } => val.expect_ty(ty, md, &Context::Empty, 0)?,
+            Item::Def { ty, val, .. } => val.expect_ty(ty, state, mut_state)?,
             Item::Axiom { ty, .. } => {
-                ty.expect_ty_ty(md, &Context::Empty, 0)?;
+                ty.expect_ty_ty(state, mut_state)?;
             }
             Item::Inductive { params, ty, constructors, .. } => {
                 let mut ctx = Context::Empty;
                 for param in params {
-                    param.ty.expect_ty_ty(md, &ctx, 0)?;
+                    param.ty.expect_ty_ty(state.with_ctx(&ctx), mut_state)?;
                     ctx = ctx.with_var(param.id, param.ty.clone());
                 }
 
-                let ty_level = ty.expect_ty_ty(md, &ctx, 0)?;
+                let ty_level = ty.expect_ty_ty(state.with_ctx(&ctx), mut_state)?;
 
                 expect_valid_inductive_def_ty(ty)?;
 
-                let ctx = Context::ThisInductive {
+                let new_ctx = Context::ThisInductive {
                     outer: Rc::new(ctx),
                     path: path.clone(),
                     ty: self.ty().expect("inductive definitions should have a type"),
                 };
 
                 for (cons_name, cons_ty) in constructors {
-                    let cons_ty_level = cons_ty.expect_ty_ty(md, &ctx, 0)?;
+                    let cons_ty_level =
+                        cons_ty.expect_ty_ty(state.with_ctx(&new_ctx), mut_state)?;
 
                     if cons_ty_level > ty_level - 1 {
                         bail!(
@@ -669,7 +705,7 @@ impl Item {
                     }
 
                     let mut cons_ty = cons_ty.clone();
-                    cons_ty.eval(md, &ctx, 0)?;
+                    cons_ty.eval(state.with_ctx(&new_ctx), mut_state)?;
                     for param in cons_ty.fn_ty_params() {
                         param.ty.check_positivity(path)?;
                     }
@@ -683,13 +719,27 @@ impl Item {
 
 impl Module {
     pub fn type_check_root(self) -> Result<Self> {
+        let mut mut_state = MutState::new();
         let mut checked_module = Module::new();
 
         for (path, mut item) in self.items {
-            item.type_check(&path, &checked_module)?;
-            item.eval(&mut checked_module)?;
+            item.type_check(&path, &checked_module, &mut mut_state)?;
+            item.eval(&mut checked_module, &mut mut_state)?;
 
             checked_module.items.insert(path, item);
+        }
+
+        // TODO: this could be sped up easily with a visited-set but im lazy
+        // check that inference suceeded
+        for &(id, span) in &mut_state.all_holes {
+            let hole_expr = Expr::Hole { id, span };
+            let resolved = mut_state.resolve_hole(&hole_expr);
+            if let Expr::Hole { .. } = resolved {
+                bail!(
+                    span, "inference underdetermined";
+                    resolved.span(), "resolved to this hole which did not resolve further"
+                );
+            }
         }
 
         Ok(checked_module)

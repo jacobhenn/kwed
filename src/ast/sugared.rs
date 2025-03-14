@@ -25,6 +25,11 @@ pub enum Expr {
         span: Span,
     },
 
+    Hole {
+        id: u128,
+        span: Span,
+    },
+
     Path {
         path: Path,
         level: usize,
@@ -151,6 +156,7 @@ impl Expr {
         match self {
             Expr::Error => panic!("error node made it to desugaring"),
             Expr::TypeType { span, .. }
+            | Expr::Hole { span, .. }
             | Expr::Path { span, .. }
             | Expr::Fn { span, .. }
             | Expr::FnType { span, .. }
@@ -167,6 +173,7 @@ impl Expr {
         match self {
             Expr::Error => panic!("error node made it to desugaring"),
             Expr::TypeType { span, .. }
+            | Expr::Hole { span, .. }
             | Expr::Path { span, .. }
             | Expr::Fn { span, .. }
             | Expr::FnType { span, .. }
@@ -193,6 +200,7 @@ impl Desugarer {
             Expr::TypeType { level, span } => {
                 desugared::Expr::TypeType { level: *level, span: Some(*span) }
             }
+            Expr::Hole { id, span } => desugared::Expr::Hole { id: *id, span: Some(*span) },
             Expr::Path { path, span, level } => {
                 let resolved_path = if let Some(import_path) = self
                     .module
